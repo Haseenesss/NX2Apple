@@ -122,6 +122,18 @@ import NXModel
         XCTAssertEqual(released, 1, "once")
     }
 
+    /// The row shows about three and a half games, so the next one shows at the edge; a game cut there is drawn smaller and fainter.
+    func testTheRowShowsThatMoreGamesFollow() {
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1792), 380, "a big screen: the widest tile")
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 600), 200, "a small window: the narrowest")
+        let mid = ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1100)
+        XCTAssertGreaterThan(1100, 3 * mid + 3 * 28, "three tiles and part of a fourth")
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: 10, y: 0, width: 300, height: 1), rowWidth: 1000), 1)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: 850, y: 0, width: 300, height: 1), rowWidth: 1000), 0.5)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: -150, y: 0, width: 300, height: 1), rowWidth: 1000), 0.5)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(nil, rowWidth: 1000), 1)
+    }
+
     /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
     func testHeldTileGrowsOnlyAsTheRoomAllows() {
         XCTAssertEqual(ConsoleArrange.heldScale(width: 470, room: 64), ConsoleArrange.maxScale, "a wide margin takes the full lift")

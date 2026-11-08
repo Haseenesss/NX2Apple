@@ -21,7 +21,7 @@ import NXLauncher
     static func cell(_ id: String) -> String { "console.row." + id }
 
     var body: some View {
-        let width: CGFloat = compact ? size.width - inset * 2 - 16 : min(470, size.width * 0.32)
+        let width: CGFloat = compact ? size.width - inset * 2 - 16 : Self.tileWidth(rowWidth: size.width - inset * 2)
         let spacing: CGFloat = (compact ? 22 : 28) - 16
         // While arranging, the scroll area reaches the screen's edges and the page margin moves inside it: the tiles stay where they
         // were, and the game picked up grows into the margin instead of being cut at it. It grows only as much as that room allows.
@@ -96,12 +96,15 @@ import NXLauncher
         let held = state.heldGameID == game.id
         let dragged = drag.id == game.id
         let rowWidth = size.width - 2 * (state.arranging ? 0 : inset - 8)
+        // a game cut at the row's edge is drawn smaller and fainter: there are more games that way, only not in view
+        let shown = held || dragged ? 1 : Self.shownFraction(tileFrames[game.id], rowWidth: rowWidth)
         return ConsoleGameTile(game: game, compact: compact, lang: lang)
             .frame(width: width)
             .contentShape(RoundedRectangle(cornerRadius: 16))
             // a click plays (or picks up and puts down while arranging, as A does); a long press picks the game up and the mouse drags it
             .rowCardGestures(id: game.id, drag: drag, tap: {
-                driver.focus(game.id)
+                driver.focus(game.id)   // brings a game cut at the edge into view
+                guard shown > 0.98 else { return }   // a click on a game cut at the edge only scrolls to it
                 if driver.state.arranging { driver.toggleHold() } else { driver.play(game.id) }
             }, pick: {
                 driver.pickUp(game.id)
@@ -116,6 +119,9 @@ import NXLauncher
             .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
                          canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: scale,
                          dragX: dragged ? drag.offset(for: game.id) : 0)
+            .scaleEffect(0.86 + 0.14 * shown, anchor: .bottom)
+            .opacity(0.3 + 0.7 * shown)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: shown)
             // the game being dragged follows the pointer at once; the others spring aside
             .transaction { if dragged { $0.animation = nil } }
             .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
@@ -139,6 +145,19 @@ import NXLauncher
         drag.stepped(into: frames[order[at + step]], step: step, frame: frames[id])   // its new place at once: no jump while the frames come back
         driver.moveHeld(step)
         RowDrag.haptic(.alignment)
+    }
+
+    /// A tile's width: about three and a half tiles in the row, so the next game shows at the edge, between 200 and 380 points.
+    static func tileWidth(rowWidth: CGFloat) -> CGFloat {
+        let gap: CGFloat = 28
+        return min(380, max(200, (rowWidth - 3 * gap) / 3.5))
+    }
+
+    /// How much of a tile is inside the visible row, 0 to 1 (1 without a frame yet).
+    static func shownFraction(_ frame: CGRect?, rowWidth: CGFloat) -> CGFloat {
+        guard let frame, frame.width > 0 else { return 1 }
+        let inside = max(0, min(frame.maxX, rowWidth) - max(frame.minX, 0))
+        return min(1, inside / frame.width)
     }
 
     private func moveByOne(_ id: String, _ step: Int) {
