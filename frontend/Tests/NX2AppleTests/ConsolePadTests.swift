@@ -143,6 +143,29 @@ import NXModel
         ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
     }
 
+    /// RB changes none of the row's geometry: the scroll view keeps its frame and its scroll. It had widened to the screen's edges
+    /// with the page margin moved inside; the AppKit scroll view took its new frame at once while the padding sprang with the rest of
+    /// the page, so every tile jerked aside and back.
+    @MainActor func testArrangingLeavesTheRowWhereItIs() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1000, height: 650))
+        let window = OffscreenWindow(size: NSSize(width: 1000, height: 650), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.6)); host.layoutSubtreeIfNeeded() }
+        settle()
+        for _ in 0..<3 { gamepad.perform(.right); settle() }
+        let scroll = try XCTUnwrap(Self.scrollViews(in: host).first { $0.hasHorizontalScroller || ($0.documentView?.frame.width ?? 0) > $0.contentView.bounds.width + 1 })
+        let frame = scroll.convert(scroll.bounds, to: nil), offset = scroll.contentView.bounds.minX
+        gamepad.perform(.r); settle()
+        XCTAssertTrue(driver.state.arranging)
+        XCTAssertEqual(scroll.convert(scroll.bounds, to: nil).minX, frame.minX, accuracy: 0.5, "the row's left edge stays")
+        XCTAssertEqual(scroll.convert(scroll.bounds, to: nil).width, frame.width, accuracy: 0.5, "and its width")
+        XCTAssertEqual(scroll.contentView.bounds.minX, offset, accuracy: 0.5, "and its scroll")
+    }
+
     /// The row shows about three and a half games, so the next one shows at the edge; a game cut there is drawn smaller and fainter.
     func testTheRowShowsThatMoreGamesFollow() {
         XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1792), 380, "a big screen: the widest tile")

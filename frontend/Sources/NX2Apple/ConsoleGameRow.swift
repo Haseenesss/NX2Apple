@@ -32,15 +32,18 @@ import NXLauncher
     var body: some View {
         let width: CGFloat = compact ? size.width - inset * 2 - 16 : Self.tileWidth(rowWidth: size.width - inset * 2)
         let spacing: CGFloat = (compact ? 22 : 28) - 16
-        // While arranging, the scroll area reaches the screen's edges and the page margin moves inside it: the tiles stay where they
-        // were, and the game picked up grows into the margin instead of being cut at it. It grows only as much as that room allows.
-        let clip: CGFloat = state.arranging ? 0 : inset - 8
-        let lead = inset - 8 - clip
+        // The scroll area always reaches the screen's edges, with the page margin inside it, so RB changes no geometry: it had
+        // widened the scroll area and moved the margin inside it, and the AppKit scroll view took its new frame at once while the
+        // padding sprang with the rest, so every tile jerked aside and back. The margin is masked instead while not arranging (as the
+        // clip at it was); while arranging it is open, so the game picked up grows into it instead of being cut there. It grows only
+        // as much as that room allows.
+        let margin = inset - 8
         let heldScale = ConsoleArrange.heldScale(width: width, room: inset)
-        let rowWidth = size.width - 2 * clip
+        let rowWidth = size.width
         let fade = min(96, width * 0.4)
-        // a tile closer than this to the scroll area's edge is brought in: past the fade, so the game in focus is never faded
-        let safe = 8 + lead + (state.arranging ? 0 : fade)
+        // a tile closer than this to the scroll area's edge is brought in: past the margin and the fade, so the game in focus is
+        // never faded
+        let safe = 8 + margin + (state.arranging ? 0 : fade)
         let order = state.games.map(\.id)
         return ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: spacing) {
@@ -60,13 +63,13 @@ import NXLauncher
                     }
                 }
                 .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
-                .padding(.horizontal, lead)
+                .padding(.horizontal, margin)
                 .background(EnclosingScrollView(row: scroller))   // the AppKit scroll view, moved directly (RowScroller.reveal)
             }
             .coordinateSpace(name: "console.row")
             .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
             .onPreferenceChange(RowOriginKey.self) { origin in
-                drag.rowMoved(originX: origin, rowWidth: size.width - 2 * (state.arranging ? 0 : inset - 8))
+                drag.rowMoved(originX: origin, rowWidth: size.width)
                 rowOriginX = origin
             }
             .onPreferenceChange(ConsoleTileFramesKey.self) { frames in
@@ -74,10 +77,9 @@ import NXLauncher
                 drag.framesChanged(frames)
                 follow(order: order, frames: frames)   // the cards moved: the one dragged may have passed another
             }
-            .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
             // Where there are more games beyond an end, the row fades out toward it instead of ending in a hard cut. The fade is fixed
             // to the screen, ending at the page margin, so it stays put when arranging widens the scroll area to the screen's edges.
-            .mask(Self.edgeFade(total: size.width, margin: inset - 8, fade: fade, leading: moreBefore, trailing: moreAfter))
+            .mask(Self.edgeFade(total: size.width, margin: margin, fade: fade, leading: moreBefore, trailing: moreAfter, open: state.arranging))
             .onReceive(scroller.$canBack.combineLatest(scroller.$canForward).debounce(for: .milliseconds(120), scheduler: RunLoop.main)) { more in
                 guard Date() >= scrollingUntil, more.0 != moreBefore || more.1 != moreAfter else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { moreBefore = more.0; moreAfter = more.1 }
@@ -125,9 +127,10 @@ import NXLauncher
         let selected = state.focusedGame?.id == game.id
         let held = state.heldGameID == game.id
         let dragged = drag.id == game.id
-        let rowWidth = size.width - 2 * (state.arranging ? 0 : inset - 8)
-        // a game cut at the row's edge is drawn smaller and fainter: there are more games that way, only not in view
-        let shown = held || dragged ? 1 : Self.shownFraction(tileFrames[game.id], rowWidth: rowWidth)
+        let rowWidth = size.width
+        // a game cut at the row's edge is drawn smaller and fainter: there are more games that way, only not in view (the page
+        // margin counts as out of view, as it is masked while not arranging)
+        let shown = held || dragged ? 1 : Self.shownFraction(tileFrames[game.id], rowWidth: rowWidth, margin: inset - 8)
         return ConsoleGameTile(game: game, compact: compact, lang: lang)
             .frame(width: width)
             .contentShape(RoundedRectangle(cornerRadius: 16))
@@ -178,15 +181,15 @@ import NXLauncher
     }
 
     /// The row's mask, across the whole width (`total`): opaque, and toward an end with more games beyond it, fading to clear over
-    /// `fade` up to the page margin and clear in the margin; an end with nothing beyond stays opaque, so a game picked up there can
-    /// grow into the margin.
-    static func edgeFade(total: CGFloat, margin: CGFloat, fade: CGFloat, leading: Bool, trailing: Bool) -> some View {
+    /// `fade` up to the page margin and clear in the margin; an end with nothing beyond stays opaque while arranging (`open`), so a
+    /// game picked up there can grow into the margin, and is clear in the margin otherwise, where the row ends at the page margin.
+    static func edgeFade(total: CGFloat, margin: CGFloat, fade: CGFloat, leading: Bool, trailing: Bool, open: Bool = true) -> some View {
         HStack(spacing: 0) {
-            Rectangle().fill(leading ? Color.clear : .black).frame(width: margin)
+            Rectangle().fill(leading || !open ? Color.clear : .black).frame(width: margin)
             LinearGradient(colors: [leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: fade)
             Rectangle().fill(.black)
             LinearGradient(colors: [.black, trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: fade)
-            Rectangle().fill(trailing ? Color.clear : .black).frame(width: margin)
+            Rectangle().fill(trailing || !open ? Color.clear : .black).frame(width: margin)
         }
         .frame(width: total)
     }
@@ -198,9 +201,9 @@ import NXLauncher
     }
 
     /// How much of a tile is inside the visible row, 0 to 1 (1 without a frame yet).
-    static func shownFraction(_ frame: CGRect?, rowWidth: CGFloat) -> CGFloat {
+    static func shownFraction(_ frame: CGRect?, rowWidth: CGFloat, margin: CGFloat = 0) -> CGFloat {
         guard let frame, frame.width > 0 else { return 1 }
-        let inside = max(0, min(frame.maxX, rowWidth) - max(frame.minX, 0))
+        let inside = max(0, min(frame.maxX, rowWidth - margin) - max(frame.minX, margin))
         return min(1, inside / frame.width)
     }
 

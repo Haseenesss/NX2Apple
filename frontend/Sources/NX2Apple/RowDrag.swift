@@ -107,9 +107,8 @@ import SwiftUI
         id = nil
     }
 
-    /// The row moved in the window or changed width while a card is held: picking a game up in console mode starts arranging, which
-    /// widens the scroll area to the screen's edges. What was measured in the old row is taken into the new one, so the card stays
-    /// under the pointer (it had jumped by the page margin).
+    /// The row moved in the window or changed width while a card is held (the window was resized). What was measured in the old
+    /// row is taken into the new one, so the card stays under the pointer.
     func rowMoved(originX: CGFloat, rowWidth: CGFloat) {
         width = rowWidth
         guard active, originX != rowOriginX else { rowOriginX = originX; return }
