@@ -5,6 +5,7 @@ import NXLauncher
 /// and casts a shadow, leaving the row, with arrows on the sides it can move to; the others step back while one is held.
 private struct ConsoleArrangeLook: ViewModifier {
     let arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         content
             .scaleEffect(held ? scale : 1)
@@ -21,6 +22,8 @@ private struct ConsoleArrangeLook: ViewModifier {
                 }
             }
             .offset(y: held ? -52 : (arranging && focused ? -22 : 0))
+            // left and right with nothing held move the focus: the tile left behind settles and the next one rises, as smoothly as a move
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.78), value: focused)
             .opacity(anyHeld && !held ? 0.5 : 1)
             .zIndex(held ? 1 : 0)
     }
