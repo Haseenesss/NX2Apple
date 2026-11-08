@@ -61,6 +61,10 @@ import NXLauncher
                 drag.framesChanged(frames)
                 follow(order: order, frames: frames)   // the cards moved: the one dragged may have passed another
             }
+            // where there are more games beyond an end, the row fades out toward it instead of ending in a hard cut
+            .mask(Self.edgeFade(width: min(180, width * 0.55), leading: scroller.canBack, trailing: scroller.canForward))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scroller.canBack)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scroller.canForward)
             .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
             .onAppear {
                 DispatchQueue.main.async { reveal(state.focusedGame?.id, margin: safe, center: true, animated: false) }
@@ -124,7 +128,7 @@ import NXLauncher
                          canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: scale,
                          dragX: dragged ? drag.offset(for: game.id) : 0)
             .scaleEffect(0.86 + 0.14 * shown, anchor: .bottom)
-            .opacity(0.3 + 0.7 * shown)
+            .opacity(0.6 + 0.4 * shown)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: shown)
             // the game being dragged follows the pointer at once; the others spring aside
             .transaction { if dragged { $0.animation = nil } }
@@ -149,6 +153,15 @@ import NXLauncher
         drag.stepped(into: frames[order[at + step]], step: step, frame: frames[id])   // its new place at once: no jump while the frames come back
         driver.moveHeld(step)
         RowDrag.haptic(.alignment)
+    }
+
+    /// The row's mask: opaque, fading to clear over `width` at an end that has more games beyond it.
+    static func edgeFade(width: CGFloat, leading: Bool, trailing: Bool) -> some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: width)
+            Rectangle().fill(.black)
+            LinearGradient(colors: [.black, trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: width)
+        }
     }
 
     /// A tile's width: about three and a half tiles in the row, so the next game shows at the edge, between 200 and 380 points.
