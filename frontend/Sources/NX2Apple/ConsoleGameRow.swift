@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import NXCore
 import NXLauncher
 
@@ -14,7 +15,11 @@ import NXLauncher
     @StateObject private var drag = RowDrag()
     @State private var tileFrames: [String: CGRect] = [:]
     @State private var rowOriginX: CGFloat = 0
-    @StateObject private var scroller = RowScroller()   // where the row starts in the window, for the mouse (RowDrag)
+    @StateObject private var scroller = RowScroller()
+    /// Whether there are more games beyond each end, settled: the scroll view's own flags flip for a moment while the row's layout
+    /// changes (RB starts arranging and the row reaches the screen's edges), and the fade followed them and flickered.
+    @State private var moreBefore = false
+    @State private var moreAfter = false   // where the row starts in the window, for the mouse (RowDrag)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var state: ConsoleState { driver.state }
@@ -30,7 +35,9 @@ import NXLauncher
         let lead = inset - 8 - clip
         let heldScale = ConsoleArrange.heldScale(width: width, room: inset)
         let rowWidth = size.width - 2 * clip
-        let safe = 8 + lead   // a tile closer than this to the scroll area's edge is brought in
+        let fade = min(96, width * 0.4)
+        // a tile closer than this to the scroll area's edge is brought in: past the fade, so the game in focus is never faded
+        let safe = 8 + lead + (state.arranging ? 0 : fade)
         let order = state.games.map(\.id)
         return ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: spacing) {
@@ -61,11 +68,14 @@ import NXLauncher
                 drag.framesChanged(frames)
                 follow(order: order, frames: frames)   // the cards moved: the one dragged may have passed another
             }
-            // where there are more games beyond an end, the row fades out toward it instead of ending in a hard cut
-            .mask(Self.edgeFade(width: min(180, width * 0.55), leading: scroller.canBack, trailing: scroller.canForward))
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scroller.canBack)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scroller.canForward)
             .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
+            // Where there are more games beyond an end, the row fades out toward it instead of ending in a hard cut. The fade is fixed
+            // to the screen, ending at the page margin, so it stays put when arranging widens the scroll area to the screen's edges.
+            .mask(Self.edgeFade(total: size.width, margin: inset - 8, fade: fade, leading: moreBefore, trailing: moreAfter))
+            .onReceive(scroller.$canBack.combineLatest(scroller.$canForward).debounce(for: .milliseconds(120), scheduler: RunLoop.main)) { more in
+                guard more.0 != moreBefore || more.1 != moreAfter else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { moreBefore = more.0; moreAfter = more.1 }
+            }
             .onAppear {
                 DispatchQueue.main.async { reveal(state.focusedGame?.id, margin: safe, center: true, animated: false) }
                 drag.onEdge = { way in scroller.scroll(by: CGFloat(way) * (width + spacing + 16)) }   // near an end while dragging: one game that way
@@ -155,13 +165,18 @@ import NXLauncher
         RowDrag.haptic(.alignment)
     }
 
-    /// The row's mask: opaque, fading to clear over `width` at an end that has more games beyond it.
-    static func edgeFade(width: CGFloat, leading: Bool, trailing: Bool) -> some View {
+    /// The row's mask, across the whole width (`total`): opaque, and toward an end with more games beyond it, fading to clear over
+    /// `fade` up to the page margin and clear in the margin; an end with nothing beyond stays opaque, so a game picked up there can
+    /// grow into the margin.
+    static func edgeFade(total: CGFloat, margin: CGFloat, fade: CGFloat, leading: Bool, trailing: Bool) -> some View {
         HStack(spacing: 0) {
-            LinearGradient(colors: [leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: width)
+            Rectangle().fill(leading ? Color.clear : .black).frame(width: margin)
+            LinearGradient(colors: [leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: fade)
             Rectangle().fill(.black)
-            LinearGradient(colors: [.black, trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: width)
+            LinearGradient(colors: [.black, trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: fade)
+            Rectangle().fill(trailing ? Color.clear : .black).frame(width: margin)
         }
+        .frame(width: total)
     }
 
     /// A tile's width: about three and a half tiles in the row, so the next game shows at the edge, between 200 and 380 points.
