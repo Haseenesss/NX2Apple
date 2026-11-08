@@ -27,7 +27,8 @@ package final class RowScroller: ObservableObject {
         update()
         if wheelMonitor == nil {
             wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self, let view = self.scrollView, let window = view.window, event.window === window,
+                // only a row with more than it shows takes the wheel; otherwise it goes on to the page around it
+                guard let self, self.canBack || self.canForward, let view = self.scrollView, let window = view.window, event.window === window,
                       !event.hasPreciseScrollingDeltas, event.scrollingDeltaX == 0, event.scrollingDeltaY != 0,
                       view.bounds.contains(view.convert(event.locationInWindow, from: nil)) else { return event }
                 self.scroll(by: -event.scrollingDeltaY * 16, animated: false)
@@ -98,7 +99,8 @@ package final class RowScroller: ObservableObject {
         let clip = view.contentView
         let target = min(max(0, x), max(0, document.frame.width - clip.bounds.width))
         guard abs(target - clip.bounds.minX) > 0.5 else { return nil }
-        if animated {
+        // a window not on screen does not run the animation (an offscreen test's): the row goes there at once
+        if animated, view.window?.occlusionState.contains(.visible) == true {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.25
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)

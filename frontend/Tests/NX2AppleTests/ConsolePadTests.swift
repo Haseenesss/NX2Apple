@@ -155,6 +155,18 @@ import NXModel
         XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(nil, rowWidth: 1000), 1)
     }
 
+    /// Picking a game up starts arranging, which moves the row in the window by the page margin: the card stays under the pointer.
+    @MainActor func testADraggedCardStaysPutWhenTheRowMoves() {
+        let drag = RowDrag()
+        drag.begin("b", frame: CGRect(x: 100, y: 0, width: 200, height: 100), rowOriginX: 56, rowWidth: 900, pointerX: 150)
+        drag.rowMoved(originX: 0, rowWidth: 1012)   // the scroll area now starts at the screen's edge
+        drag.framesChanged(["b": CGRect(x: 156, y: 0, width: 200, height: 100)])   // the same place on screen, in the new row
+        XCTAssertEqual(drag.offset(for: "b"), 0, "no jump by the margin")
+        drag.moved(to: 236)   // 30 points right of where the pointer was, in the new row
+        XCTAssertEqual(drag.offset(for: "b"), 30)
+        drag.end()
+    }
+
     /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
     func testHeldTileGrowsOnlyAsTheRoomAllows() {
         XCTAssertEqual(ConsoleArrange.heldScale(width: 470, room: 64), ConsoleArrange.maxScale, "a wide margin takes the full lift")

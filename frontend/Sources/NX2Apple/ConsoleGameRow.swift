@@ -65,7 +65,10 @@ import NXLauncher
             }
             .coordinateSpace(name: "console.row")
             .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
-            .onPreferenceChange(RowOriginKey.self) { rowOriginX = $0 }
+            .onPreferenceChange(RowOriginKey.self) { origin in
+                drag.rowMoved(originX: origin, rowWidth: size.width - 2 * (state.arranging ? 0 : inset - 8))
+                rowOriginX = origin
+            }
             .onPreferenceChange(ConsoleTileFramesKey.self) { frames in
                 tileFrames = frames
                 drag.framesChanged(frames)

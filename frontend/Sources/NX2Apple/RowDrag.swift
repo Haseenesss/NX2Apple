@@ -25,6 +25,7 @@ import SwiftUI
     private var width: CGFloat = 0               // the visible row
     private var timer: Timer?
     private var monitors: [Any] = []
+    private var resignObserver: NSObjectProtocol?
     private var onMove: () -> Void = {}
     private var onRelease: () -> Void = {}
     /// How near an end of the visible row the pointer scrolls it.
@@ -58,6 +59,13 @@ import SwiftUI
             MainActor.assumeIsolated { self?.release() }
             return event
         }) { monitors.append(m) }
+        // a release this app does not see (another app came forward mid-drag) still puts the card down
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.release() }
+        }) { monitors.append(m) }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.release() }
+        }
         Self.haptic(.generic)
     }
 
@@ -69,7 +77,11 @@ import SwiftUI
         if way == 0 { timer?.invalidate(); timer = nil }
         else if timer == nil {
             timer = Timer.scheduledTimer(withTimeInterval: 0.32, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { if let self, self.edgeDirection != 0 { self.onEdge(self.edgeDirection) } }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if NSEvent.pressedMouseButtons & 1 == 0 { self.release(); return }   // the button came up where no event told us
+                    if self.edgeDirection != 0 { self.onEdge(self.edgeDirection) }
+                }
             }
             onEdge(way)
         }
@@ -89,8 +101,21 @@ import SwiftUI
         timer?.invalidate(); timer = nil
         for m in monitors { NSEvent.removeMonitor(m) }
         monitors = []
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
         onMove = {}; onRelease = {}
         id = nil
+    }
+
+    /// The row moved in the window or changed width while a card is held: picking a game up in console mode starts arranging, which
+    /// widens the scroll area to the screen's edges. What was measured in the old row is taken into the new one, so the card stays
+    /// under the pointer (it had jumped by the page margin).
+    func rowMoved(originX: CGFloat, rowWidth: CGFloat) {
+        width = rowWidth
+        guard active, originX != rowOriginX else { rowOriginX = originX; return }
+        let shift = rowOriginX - originX
+        rowOriginX = originX
+        startX += shift; x += shift; startMinX += shift
     }
 
     /// Which way the row scrolls now: the pointer near its left end (-1), its right end (+1), or neither (0).

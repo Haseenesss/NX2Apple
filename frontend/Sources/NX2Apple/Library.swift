@@ -474,6 +474,7 @@ final class GameLibrary: ObservableObject {
             game.installedDevice = old.installedDevice
             game.ipaPath = old.ipaPath
             game.archivePath = old.archivePath
+            game.lastPlayed = [game.lastPlayed, old.lastPlayed].compactMap { $0 }.max()   // the Recent order keeps its place
             games.removeAll { $0.id == old.id }
         }
         game.titleID = app.titleID

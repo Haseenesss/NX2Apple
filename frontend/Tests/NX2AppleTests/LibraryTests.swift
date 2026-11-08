@@ -292,6 +292,23 @@ import NXModel
         XCTAssertFalse(FileManager.default.fileExists(atPath: from.path))
     }
 
+    /// #937: a build that merges a path-keyed entry into the game's existing one keeps when it was last played (the Recent order).
+    func testBuildOfPathKeyedEntryKeepsWhenItWasLastPlayed() throws {
+        let app = try makeApp(titleID)
+        let file = temporary.appendingPathComponent("library.json")
+        var existing = LibraryGame(titleID: titleID, name: "Hades")
+        existing.appPath = app.path
+        let played = Date(timeIntervalSince1970: 1_000)
+        existing.lastPlayed = played
+        var pending = LibraryGame(titleID: "/games/Hades.nsp", name: "Hades")
+        pending.inputs = ["base": ["/games/Hades.nsp"]]
+        try JSONEncoder().encode([existing, pending]).write(to: file)
+        let library = GameLibrary(file: file)
+        library.recordCompletedApp(path: app.path, for: pending.id)
+        XCTAssertEqual(library.games.count, 1)
+        XCTAssertEqual(library.games[0].lastPlayed, played)
+    }
+
     func testRebuildingSameGameKeepsOneEntryAndCustomArtwork() throws {
         let app = try makeApp(titleID)
         let library = GameLibrary(file: temporary.appendingPathComponent("library.json"))

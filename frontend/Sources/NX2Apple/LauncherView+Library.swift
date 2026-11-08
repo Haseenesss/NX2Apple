@@ -210,7 +210,10 @@ extension LauncherView {
                     .padding(.horizontal, -Self.ringRoom).padding(.vertical, -Self.ringRoom)
                     .coordinateSpace(name: "library.row")
                     .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
-                    .onPreferenceChange(RowOriginKey.self) { libraryRowOriginX = $0 }
+                    .onPreferenceChange(RowOriginKey.self) { origin in
+                        libraryDrag.rowMoved(originX: origin, rowWidth: width - 68 + 2 * Self.ringRoom)
+                        libraryRowOriginX = origin
+                    }
                     .onPreferenceChange(RowFramesKey.self) { frames in cardFrames = frames; libraryDrag.framesChanged(frames); followDrag() }
                     .onAppear {
                         libraryDrag.onEdge = { way in row.scroll(by: CGFloat(way) * step) }   // near an end while dragging: one card that way
