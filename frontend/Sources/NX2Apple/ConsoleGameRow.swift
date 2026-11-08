@@ -13,6 +13,7 @@ import NXLauncher
     let inset: CGFloat
     @StateObject private var drag = RowDrag()
     @State private var tileFrames: [String: CGRect] = [:]
+    @State private var rowOriginX: CGFloat = 0   // where the row starts in the window, for the mouse (RowDrag)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var state: ConsoleState { driver.state }
@@ -52,8 +53,11 @@ import NXLauncher
                 .padding(.horizontal, lead)
             }
             .coordinateSpace(name: "console.row")
+            .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
+            .onPreferenceChange(RowOriginKey.self) { rowOriginX = $0 }
             .onPreferenceChange(ConsoleTileFramesKey.self) { frames in
                 tileFrames = frames
+                drag.framesChanged(frames)
                 follow(order: order, frames: frames)   // the cards moved: the one dragged may have passed another
             }
             .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
@@ -83,6 +87,7 @@ import NXLauncher
                 withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.cell(id), anchor: .center) }
             }
             .onChange(of: state.arranging) { on in if !on, drag.active { drag.end() } }
+            .onDisappear { drag.end() }
         }
     }
 
@@ -94,34 +99,23 @@ import NXLauncher
         return ConsoleGameTile(game: game, compact: compact, lang: lang)
             .frame(width: width)
             .contentShape(RoundedRectangle(cornerRadius: 16))
-            .gesture(
-                LongPressGesture(minimumDuration: 0.35)
-                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("console.row")))
-                    .onChanged { value in
-                        guard case let .second(true, move) = value else { return }
-                        if !drag.active {
-                            driver.pickUp(game.id)
-                            guard driver.state.heldGameID == game.id else { return }
-                            drag.begin(game.id, frame: tileFrames[game.id], at: move?.location.x, rowWidth: rowWidth)
-                        } else if let move {
-                            drag.moved(to: move.location.x, rowWidth: rowWidth)
-                            follow(order: driver.state.games.map(\.id), frames: tileFrames)
-                        }
-                    }
-                    .onEnded { _ in
-                        guard drag.active else { return }
-                        drag.end()
-                        driver.putDown()
-                    }
-                    .exclusively(before: TapGesture().onEnded {
-                        driver.focus(game.id)
-                        if state.arranging { driver.toggleHold() } else { driver.play(game.id) }
-                    })
-            )
+            // a click plays (or picks up and puts down while arranging, as A does); a long press picks the game up and the mouse drags it
+            .rowCardGestures(id: game.id, drag: drag, tap: {
+                driver.focus(game.id)
+                if driver.state.arranging { driver.toggleHold() } else { driver.play(game.id) }
+            }, pick: {
+                driver.pickUp(game.id)
+                guard driver.state.heldGameID == game.id else { return }
+                drag.begin(game.id, frame: tileFrames[game.id], rowOriginX: rowOriginX, rowWidth: rowWidth,
+                           onMove: { follow(order: driver.state.games.map(\.id), frames: tileFrames) },
+                           onRelease: { driver.putDown() })
+            })
+            .scaleEffect(drag.pressing == game.id && !held ? 1.03 : 1)   // pressed: it starts to lift before it is picked up
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: drag.pressing)
             .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
             .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
                          canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: scale,
-                         dragX: dragged ? drag.offset(for: game.id, frames: tileFrames) : 0)
+                         dragX: dragged ? drag.offset(for: game.id) : 0)
             // the game being dragged follows the pointer at once; the others spring aside
             .transaction { if dragged { $0.animation = nil } }
             .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
@@ -141,7 +135,8 @@ import NXLauncher
     private func follow(order: [String], frames: [String: CGRect]) {
         guard drag.active else { return }
         let step = drag.step(order: order, frames: frames)
-        guard step != 0, driver.state.canMoveHeld(step) else { return }
+        guard step != 0, driver.state.canMoveHeld(step), let id = drag.id, let at = order.firstIndex(of: id) else { return }
+        drag.stepped(into: frames[order[at + step]], step: step, frame: frames[id])   // its new place at once: no jump while the frames come back
         driver.moveHeld(step)
         RowDrag.haptic(.alignment)
     }

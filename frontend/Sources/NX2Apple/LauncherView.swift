@@ -120,6 +120,7 @@ struct LauncherView: View {
     /// A card dragged along the collection with the mouse after a long press (RowDrag), and where each card is, in the row's space.
     @StateObject var libraryDrag = RowDrag()
     @State var cardFrames: [String: CGRect] = [:]
+    @State var libraryRowOriginX: CGFloat = 0
 
     var filteredGames: [LibraryGame] {
         libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder)

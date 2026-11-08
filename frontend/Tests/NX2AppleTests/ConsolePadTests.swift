@@ -88,27 +88,38 @@ import NXModel
         XCTAssertFalse(state.arranging, "not over a sheet")
     }
 
-    /// The card under the pointer: it is drawn where the pointer took it, and it asks to move once its middle passes the next card's.
+    /// The card under the pointer: it is drawn where the pointer took it, it asks to move once its middle passes the next card's,
+    /// it takes its new place at once when it moves (no jump while the frames come back), and the release puts it down.
     @MainActor func testADraggedCardFollowsThePointerAndPassesItsNeighbours() {
         let frames = ["a": CGRect(x: 0, y: 0, width: 100, height: 60), "b": CGRect(x: 120, y: 0, width: 100, height: 60),
                       "c": CGRect(x: 240, y: 0, width: 100, height: 60)]
         let drag = RowDrag()
-        drag.begin("b", frame: frames["b"], at: nil, rowWidth: 1000)
-        drag.moved(to: 170, rowWidth: 1000)   // the first report anchors the pointer
-        XCTAssertEqual(drag.offset(for: "b", frames: frames), 0)
-        drag.moved(to: 200, rowWidth: 1000)
-        XCTAssertEqual(drag.offset(for: "b", frames: frames), 30)
+        var released = 0
+        drag.begin("b", frame: frames["b"], rowOriginX: 0, rowWidth: 1000, pointerX: 170, onRelease: { released += 1 })
+        XCTAssertEqual(drag.offset(for: "b"), 0)
+        XCTAssertEqual(drag.offset(for: "a"), 0, "only the dragged card moves with the pointer")
+        drag.moved(to: 200)
+        XCTAssertEqual(drag.offset(for: "b"), 30)
         XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 0, "its middle (200) is short of c's (290)")
-        drag.moved(to: 300, rowWidth: 1000)
+        drag.moved(to: 300)
         XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 1)
-        drag.moved(to: 40, rowWidth: 1000)
-        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), -1)
-        drag.moved(to: 30, rowWidth: 1000)
+        drag.stepped(into: frames["c"], step: 1, frame: frames["b"])
+        XCTAssertEqual(120 + 130 - 240 as CGFloat, drag.offset(for: "b"), "drawn from its new place (240) at once, still under the pointer")
+        XCTAssertEqual(drag.step(order: ["a", "c", "b"], frames: frames), 0, "no second step before the frames come back")
+        let after = ["a": frames["a"]!, "c": CGRect(x: 120, y: 0, width: 100, height: 60), "b": CGRect(x: 240, y: 0, width: 100, height: 60)]
+        drag.framesChanged(after)
+        XCTAssertEqual(drag.offset(for: "b"), 10)
+        drag.moved(to: 40)
+        XCTAssertEqual(drag.step(order: ["a", "c", "b"], frames: after), -1)
+        drag.moved(to: 30)
         XCTAssertEqual(drag.edgeDirection, -1, "near the left end the row scrolls left")
         XCTAssertEqual(RowDrag.nextCard(1, order: ["a", "b", "c"], frames: frames, rowWidth: 300), "c")
-        drag.end()
+        drag.release()
+        XCTAssertEqual(released, 1, "the button coming up puts the card down")
         XCTAssertFalse(drag.active)
-        XCTAssertEqual(drag.offset(for: "b", frames: frames), 0)
+        XCTAssertEqual(drag.offset(for: "b"), 0)
+        drag.release()
+        XCTAssertEqual(released, 1, "once")
     }
 
     /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
