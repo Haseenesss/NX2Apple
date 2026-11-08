@@ -5,6 +5,16 @@ import Foundation
 extension LiveConsoleDriver {
     func toggleArranging() { state.toggleArranging() }
     func toggleHold() { state.toggleHold() }
+    func pickUp(_ gameID: String) { state.pickUp(gameID) }
+    func putDown() { state.putDown() }
+
+    /// Recent or Name from the General page ends an arranged order, as the desktop's choice does; Custom keeps the row as it is.
+    func setLibraryOrder(_ order: LibraryOrder) {
+        if order == .custom, LibraryOrder.load() != .custom { library.adoptOrder(LibraryOrder.load().arrange(library.games).map(\.id)) }
+        order.save()
+        state.prefs.order = order
+        refresh()
+    }
 
     func moveHeld(_ step: Int) {
         guard let id = state.heldGameID.flatMap(UUID.init(uuidString:)), let before = state.moveHeld(step) else { return }

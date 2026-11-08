@@ -5,6 +5,8 @@ import NXLauncher
 /// and casts a shadow, leaving the row, with arrows on the sides it can move to; the others step back while one is held.
 private struct ConsoleArrangeLook: ViewModifier {
     let arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat
+    /// Where a game dragged with the mouse is drawn from its place, so it stays under the pointer (RowDrag).
+    var dragX: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         content
@@ -21,7 +23,7 @@ private struct ConsoleArrangeLook: ViewModifier {
                     .transition(.opacity)
                 }
             }
-            .offset(y: held ? -52 : (arranging && focused ? -22 : 0))
+            .offset(x: dragX, y: held ? -52 : (arranging && focused ? -22 : 0))
             // left and right with nothing held move the focus: the tile left behind settles and the next one rises, as smoothly as a move
             .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.78), value: focused)
             .opacity(anyHeld && !held ? 0.5 : 1)
@@ -37,8 +39,8 @@ private struct ConsoleArrangeLook: ViewModifier {
 }
 
 extension View {
-    func arrangeLook(arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat) -> some View {
-        modifier(ConsoleArrangeLook(arranging: arranging, focused: focused, held: held, anyHeld: anyHeld, canLeft: canLeft, canRight: canRight, scale: scale))
+    func arrangeLook(arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat, dragX: CGFloat = 0) -> some View {
+        modifier(ConsoleArrangeLook(arranging: arranging, focused: focused, held: held, anyHeld: anyHeld, canLeft: canLeft, canRight: canRight, scale: scale, dragX: dragX))
     }
 }
 

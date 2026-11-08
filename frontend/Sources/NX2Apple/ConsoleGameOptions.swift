@@ -232,6 +232,10 @@ struct ConsoleSwitchRow: View {
                            note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
             ConsoleMenuRow(id: "console.general.update", scope: scope, symbol: "arrow.down.app", title: t("console.update.title"),
                            note: updateNote, value: updateValue, compact: compact) { driver.appUpdateAction() }
+            // Recent and Name, as the desktop offers them; Custom while an order arranged with RB is in use, which either choice ends
+            ConsoleMenuRow(id: "console.general.order", scope: scope, symbol: "arrow.up.arrow.down", title: t("console.order.title"),
+                           note: t(prefs.order == .custom ? "console.order.noteCustom" : "console.order.note"), value: t(prefs.order.labelKey),
+                           compact: compact) { driver.setLibraryOrder(prefs.order == .recent ? .name : .recent) }
             ConsoleSectionHeading(title: t("console.general.launcher"), compact: compact).padding(.top, 14)
             ForEach(ConsolePref.allCases, id: \.self) { pref in
                 ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),

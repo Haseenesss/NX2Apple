@@ -38,7 +38,6 @@ enum ConsoleInput {
     @State private var languageCode = Lang.saved?.code ?? ""
     @StateObject private var pad = PadFocus()
     @StateObject private var gamepad: LauncherGamepad
-    @State private var tileFrames: [String: CGRect] = [:]
     /// The glyph set follows the input used last: a controller's own buttons, or key caps after the keyboard.
     @State private var glyphs: ConsoleGlyphs
     /// Where the focus was under each open sheet, so closing one puts it back there (the menu button, the game, a menu row).
@@ -175,7 +174,7 @@ enum ConsoleInput {
                             .padding(.horizontal, inset)
                             .frame(height: compact ? 140 : 60 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
                         }
-                        gameRow(size: size, compact: compact, inset: inset)
+                        ConsoleGameRow(driver: driver, lang: lang, size: size, compact: compact, inset: inset)
                     }
                     .padding(.top, 24).padding(.bottom, 24)
                     .frame(minHeight: area.size.height, alignment: .bottomLeading)
@@ -185,6 +184,8 @@ enum ConsoleInput {
             if !state.games.isEmpty { hintBar(compact: compact, width: size.width).padding(.horizontal, inset).padding(.bottom, compact ? 20 : 32) }
         }
         .padScope("console", pad)
+        // a click on the empty screen ends arranging, as Done, RB and B do
+        .background { if state.arranging { Color.clear.contentShape(Rectangle()).onTapGesture { driver.toggleArranging() } } }
         // arranging lifts the title and the row a little (the row takes room above it for the game picked up), and a game picked up
         // or moved springs into place
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: state.arranging)
@@ -211,69 +212,6 @@ enum ConsoleInput {
         .frame(height: compact ? 40 : 52)
     }
 
-    private func gameRow(size: CGSize, compact: Bool, inset: CGFloat) -> some View {
-        let width: CGFloat = compact ? size.width - inset * 2 - 16 : min(470, size.width * 0.32)
-        // While arranging, the scroll area reaches the screen's edges and the page margin moves inside it: the tiles stay where they
-        // were, and the game picked up grows into the margin instead of being cut at it. It grows only as much as that room allows.
-        let clip: CGFloat = state.arranging ? 0 : inset - 8
-        let lead = inset - 8 - clip
-        let heldScale = ConsoleArrange.heldScale(width: width, room: inset)
-        let rowWidth = size.width - 2 * clip
-        let safe = 8 + lead   // a tile closer than this to the scroll area's edge is brought in
-        return ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
-                    ForEach(state.games) { game in
-                        let selected = state.focusedGame?.id == game.id
-                        let held = state.heldGameID == game.id
-                        Button { driver.focus(game.id); if state.arranging { driver.toggleHold() } else { driver.play(game.id) } } label: {
-                            ConsoleGameTile(game: game, compact: compact, lang: lang)
-                                .frame(width: width)
-                                .contentShape(RoundedRectangle(cornerRadius: 16))
-                        }
-                        .buttonStyle(.plain)
-                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
-                        .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
-                                     canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: heldScale)
-                        .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
-                        .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
-                        .accessibilityHint(t("console.playHint"))
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                        // every tile carries its own 8 pt of room for the ring and the focus scale, and the scroll target is this padded
-                        // cell, so a scroll to the first or last tile never pushes that room out of the clip
-                        .padding(.horizontal, 8)
-                        .id(Self.rowCell(game.id))
-                    }
-                }
-                .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
-                .padding(.horizontal, lead)
-            }
-            .coordinateSpace(name: "console.row")
-            .onPreferenceChange(ConsoleTileFramesKey.self) { tileFrames = $0 }
-            .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
-            .onChange(of: state.focusedGame?.id) { id in
-                // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
-                // the least that brings it inside, and a new focus replaces the running scroll (held repeats do not queue).
-                guard let id else { return }
-                guard let frame = tileFrames[id] else { proxy.scrollTo(Self.rowCell(id), anchor: .center); return }
-                // while arranging a tile is brought to the middle, where a game picked up has room on both sides
-                let anchor: UnitPoint? = frame.minX < safe ? (state.arranging ? .center : .leading)
-                    : (frame.maxX > rowWidth - safe ? (state.arranging ? .center : .trailing) : nil)
-                if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.rowCell(id), anchor: anchor) } }
-            }
-            .onAppear { if let id = state.focusedGame?.id { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
-            .onChange(of: state.games.map(\.id)) { _ in   // the game being moved stays in view, with room to either side
-                guard let id = state.heldGameID else { return }
-                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id), anchor: .center) }
-            }
-            .onChange(of: state.heldGameID) { id in   // a game picked up at the edge of the view comes in before it grows
-                guard let id, let frame = tileFrames[id], frame.minX < safe || frame.maxX > rowWidth - safe else { return }
-                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id), anchor: .center) }
-            }
-        }
-    }
-
-    private static func rowCell(_ id: String) -> String { "console.row." + id }
 
     private func hintBar(compact: Bool, width: CGFloat) -> some View {
         let items = {
@@ -281,7 +219,9 @@ enum ConsoleInput {
                 if state.arranging {
                     if state.heldGameID != nil { hint(glyph: .symbol("arrow.left.and.right.circle"), "console.arrange.move", compact: compact) }
                     hint(.activate, state.heldGameID == nil ? "console.arrange.pickUp" : "console.arrange.putDown", compact: compact)
-                    hint(.arrange, "console.arrange.done", compact: compact)
+                    // the way out for the mouse too: the only hint that is a button
+                    Button { driver.toggleArranging() } label: { hint(.arrange, "console.arrange.done", compact: compact) }
+                        .buttonStyle(.plain).contentShape(Capsule())
                 } else {
                     hint(.activate, "console.play", compact: compact)
                     hint(.options, "console.options", compact: compact)
@@ -729,11 +669,6 @@ struct ConsoleButtonWidths: PreferenceKey {
     static var defaultValue: [String: CGFloat] = [:]
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) { value.merge(nextValue()) { _, new in new } }
     static func reader(_ id: String) -> some View { GeometryReader { g in Color.clear.preference(key: ConsoleButtonWidths.self, value: [id: g.size.width]) } }
-}
-
-private struct ConsoleTileFramesKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
 }
 
 /// A game's cover alone: the focused game's name is the big title above the row, so no tile carries a caption.

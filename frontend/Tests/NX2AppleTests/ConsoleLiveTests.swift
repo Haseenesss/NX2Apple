@@ -243,6 +243,11 @@ import SwiftUI
         XCTAssertEqual(library.games.map(\.name), ["Mario", "Alba", "Zelda"])
         driver.refresh()
         XCTAssertEqual(driver.state.games.map(\.title), ["Mario", "Alba", "Zelda"], "a rebuilt list keeps it")
+        // the General page: Name ends the arranged order, as the desktop's choice does
+        driver.setLibraryOrder(.name)
+        XCTAssertEqual(LibraryOrder.load(), .name)
+        XCTAssertEqual(driver.state.prefs.order, .name)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Alba", "Mario", "Zelda"])
     }
 
     func testOpenOptionsKeepTheirDetails() throws {

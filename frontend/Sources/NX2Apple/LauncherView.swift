@@ -111,9 +111,15 @@ struct LauncherView: View {
     /// Recent or Name; either also ends an order arranged in console mode.
     func setLibraryOrder(_ order: LibraryOrder) {
         guard order != libraryOrder else { return }
+        // Custom starts from the row as it is, so dragging the first card moves nothing else (#937)
+        if order == .custom { library.adoptOrder(libraryOrder.arrange(library.games).map(\.id)) }
         withAnimation(.easeInOut(duration: 0.2)) { libraryOrder = order }
         order.save()
     }
+
+    /// A card dragged along the collection with the mouse after a long press (RowDrag), and where each card is, in the row's space.
+    @StateObject var libraryDrag = RowDrag()
+    @State var cardFrames: [String: CGRect] = [:]
 
     var filteredGames: [LibraryGame] {
         libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder)

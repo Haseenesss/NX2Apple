@@ -26,6 +26,9 @@ import NXLauncher
     func toggleArranging() { base.toggleArranging() }
     func toggleHold() { base.toggleHold() }
     func moveHeld(_ step: Int) { base.moveHeld(step) }
+    func pickUp(_ gameID: String) { base.pickUp(gameID) }
+    func putDown() { base.putDown() }
+    func setLibraryOrder(_ order: LibraryOrder) { base.setLibraryOrder(order) }
     func openGeneral() { base.openGeneral() }
     func openCloudSaves() { base.openCloudSaves() }
     func openLanguage() { base.openLanguage() }

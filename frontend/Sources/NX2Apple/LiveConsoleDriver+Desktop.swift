@@ -33,6 +33,7 @@ extension LiveConsoleDriver {
             prefs.update = Self.update(updates, buildRunning: builds?.running == true)
             prefs.updateStatus = updates.status
         }
+        prefs.order = LibraryOrder.load()
         if prefs != state.prefs { state.prefs = prefs }
         let build = builds.flatMap { Self.build($0, library: library, t: t) }
         if build != state.build { state.build = build }

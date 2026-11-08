@@ -174,6 +174,9 @@ import NXLauncher
     func toggleArranging() { state.toggleArranging() }
     func toggleHold() { state.toggleHold() }
     func moveHeld(_ step: Int) { _ = state.moveHeld(step) }
+    func pickUp(_ gameID: String) { state.pickUp(gameID) }
+    func putDown() { state.putDown() }
+    func setLibraryOrder(_ order: LibraryOrder) { state.prefs.order = order }
     func openGeneral() { state.openGeneral() }
     func openLanguage() { state.openLanguage() }
     func setMenuSwapAB(_ on: Bool) {

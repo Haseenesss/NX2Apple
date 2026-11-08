@@ -61,6 +61,56 @@ import NXModel
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
     }
 
+    /// The mouse (#937): a long press picks a game up and starts arranging, letting go puts it down and arranging goes on. A game moves
+    /// within its group, and the line between the groups is drawn before the first game still to build.
+    func testTheMousePicksUpAndPutsDownWithinItsGroup() {
+        func game(_ id: String, _ status: ConsoleGame.Status) -> ConsoleGame {
+            ConsoleGame(id: id, title: id, version: "", platforms: [.mac], artwork: nil, status: status)
+        }
+        var state = ConsoleState()
+        state.games = [game("a", .ready), game("b", .ready), game("c", .ready), game("d", .needsBuild), game("e", .needsBuild)]
+        XCTAssertEqual(state.groupBoundaryID, "d")
+        state.pickUp("b")
+        XCTAssertTrue(state.arranging, "a long press starts arranging")
+        XCTAssertEqual(state.heldGameID, "b")
+        XCTAssertEqual(state.focusedGameID, "b")
+        XCTAssertEqual(state.heldRange, 0...2, "the games ready on this Mac")
+        _ = state.moveHeld(1)
+        XCTAssertNil(state.moveHeld(1), "not past the last ready game")
+        XCTAssertEqual(state.games.map(\.id), ["a", "c", "b", "d", "e"])
+        state.putDown()
+        XCTAssertNil(state.heldGameID)
+        XCTAssertTrue(state.arranging, "letting go leaves arranging on, as on an iPhone")
+        state.pickUp("e")
+        XCTAssertEqual(state.heldRange, 3...4)
+        state.sheets = [.menu]; state.arranging = false; state.heldGameID = nil
+        state.pickUp("a")
+        XCTAssertFalse(state.arranging, "not over a sheet")
+    }
+
+    /// The card under the pointer: it is drawn where the pointer took it, and it asks to move once its middle passes the next card's.
+    @MainActor func testADraggedCardFollowsThePointerAndPassesItsNeighbours() {
+        let frames = ["a": CGRect(x: 0, y: 0, width: 100, height: 60), "b": CGRect(x: 120, y: 0, width: 100, height: 60),
+                      "c": CGRect(x: 240, y: 0, width: 100, height: 60)]
+        let drag = RowDrag()
+        drag.begin("b", frame: frames["b"], at: nil, rowWidth: 1000)
+        drag.moved(to: 170, rowWidth: 1000)   // the first report anchors the pointer
+        XCTAssertEqual(drag.offset(for: "b", frames: frames), 0)
+        drag.moved(to: 200, rowWidth: 1000)
+        XCTAssertEqual(drag.offset(for: "b", frames: frames), 30)
+        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 0, "its middle (200) is short of c's (290)")
+        drag.moved(to: 300, rowWidth: 1000)
+        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 1)
+        drag.moved(to: 40, rowWidth: 1000)
+        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), -1)
+        drag.moved(to: 30, rowWidth: 1000)
+        XCTAssertEqual(drag.edgeDirection, -1, "near the left end the row scrolls left")
+        XCTAssertEqual(RowDrag.nextCard(1, order: ["a", "b", "c"], frames: frames, rowWidth: 300), "c")
+        drag.end()
+        XCTAssertFalse(drag.active)
+        XCTAssertEqual(drag.offset(for: "b", frames: frames), 0)
+    }
+
     /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
     func testHeldTileGrowsOnlyAsTheRoomAllows() {
         XCTAssertEqual(ConsoleArrange.heldScale(width: 470, room: 64), ConsoleArrange.maxScale, "a wide margin takes the full lift")

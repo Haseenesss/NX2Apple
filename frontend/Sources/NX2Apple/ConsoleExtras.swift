@@ -68,6 +68,8 @@ struct ConsolePrefs: Equatable {
     var update: ConsoleAppUpdate = .upToDate
     /// What the update store says now (downloading, ready, why an install failed), shown under the version.
     var updateStatus = ""
+    /// The row's order (LibraryOrder, shared with the desktop): Custom while an order arranged here is in use.
+    var order: LibraryOrder = .recent
     subscript(_ pref: ConsolePref) -> Bool { values[pref] ?? Self.defaults[pref] ?? false }
     static let defaults: [ConsolePref: Bool] = [.startInConsole: false, .promptOnController: true, .returnAfterPlay: true, .onlyBuilt: false]
 }

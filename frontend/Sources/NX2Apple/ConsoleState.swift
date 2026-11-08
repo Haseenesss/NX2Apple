@@ -269,6 +269,30 @@ struct ConsoleState {
         guard arranging, let id = focusedGame?.id else { return }
         heldGameID = heldGameID == id ? nil : id
     }
+    /// A long press with the mouse: arranging starts if it has not, and that game is focused and picked up.
+    mutating func pickUp(_ id: String) {
+        guard games.contains(where: { $0.id == id }) else { return }
+        if !arranging { toggleArranging() }
+        guard arranging else { return }
+        focus(id)
+        heldGameID = id
+    }
+    /// The mouse let go: the game stays where it is and arranging goes on.
+    mutating func putDown() { heldGameID = nil }
+    /// The places the held game can take: its group (the games ready on this Mac, or the others), which it never leaves.
+    var heldRange: ClosedRange<Int>? {
+        guard let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }) else { return nil }
+        let ready = games[at].status == .ready
+        var lo = at, hi = at
+        while lo > 0, (games[lo - 1].status == .ready) == ready { lo -= 1 }
+        while hi < games.count - 1, (games[hi + 1].status == .ready) == ready { hi += 1 }
+        return lo...hi
+    }
+    /// The first game of the second group, where arranging draws the line between the groups; nil when there is one group.
+    var groupBoundaryID: String? {
+        guard let i = games.firstIndex(where: { $0.status != .ready }), i > 0 else { return nil }
+        return games[i].id
+    }
     /// Whether the held game can go one place left (-1) or right (+1): not past the row's end, nor out of its group.
     func canMoveHeld(_ step: Int) -> Bool {
         guard arranging, let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }), games.indices.contains(at + step) else { return false }
@@ -456,6 +480,11 @@ struct ConsoleState {
     func toggleArranging()
     func toggleHold()
     func moveHeld(_ step: Int)
+    /// The mouse: a long press picks a game up (and starts arranging), letting go puts it down.
+    func pickUp(_ gameID: String)
+    func putDown()
+    /// The row's order from the General page: Recent and Name, and Custom while an arranged order is in use.
+    func setLibraryOrder(_ order: LibraryOrder)
 }
 
 extension ConsoleDriver {
@@ -488,6 +517,9 @@ extension ConsoleDriver {
     func toggleArranging() {}
     func toggleHold() {}
     func moveHeld(_ step: Int) {}
+    func pickUp(_ gameID: String) {}
+    func putDown() {}
+    func setLibraryOrder(_ order: LibraryOrder) {}
 }
 
 /// Shared choice/range/toggle stepping for mouse, d-pad and keyboard. No settings store is touched.
