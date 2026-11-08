@@ -61,6 +61,15 @@ import NXModel
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
     }
 
+    /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
+    func testHeldTileGrowsOnlyAsTheRoomAllows() {
+        XCTAssertEqual(ConsoleArrange.heldScale(width: 470, room: 64), ConsoleArrange.maxScale, "a wide margin takes the full lift")
+        let narrow = ConsoleArrange.heldScale(width: 470, room: 24)
+        XCTAssertLessThan(narrow, ConsoleArrange.maxScale)
+        XCTAssertLessThanOrEqual(470 * (narrow - 1) / 2 + ConsoleArrange.arrowOverhang, 24, "the growth and the arrows fit the room")
+        XCTAssertEqual(ConsoleArrange.heldScale(width: 330, room: 4), 1, "no room: no growth")
+    }
+
     /// #937: arranging moves the held game within its group (games ready on this Mac stay first) and not past the row's ends.
     func testArrangingMovesTheHeldGameWithinItsGroup() {
         func game(_ id: String, _ status: ConsoleGame.Status) -> ConsoleGame {

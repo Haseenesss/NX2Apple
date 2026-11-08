@@ -213,6 +213,13 @@ enum ConsoleInput {
 
     private func gameRow(size: CGSize, compact: Bool, inset: CGFloat) -> some View {
         let width: CGFloat = compact ? size.width - inset * 2 - 16 : min(470, size.width * 0.32)
+        // While arranging, the scroll area reaches the screen's edges and the page margin moves inside it: the tiles stay where they
+        // were, and the game picked up grows into the margin instead of being cut at it. It grows only as much as that room allows.
+        let clip: CGFloat = state.arranging ? 0 : inset - 8
+        let lead = inset - 8 - clip
+        let heldScale = ConsoleArrange.heldScale(width: width, room: inset)
+        let rowWidth = size.width - 2 * clip
+        let safe = 8 + lead   // a tile closer than this to the scroll area's edge is brought in
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
@@ -227,7 +234,7 @@ enum ConsoleInput {
                         .buttonStyle(.plain)
                         .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
                         .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
-                                     canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1))
+                                     canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: heldScale)
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
                         .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
                         .accessibilityHint(t("console.playHint"))
@@ -239,23 +246,29 @@ enum ConsoleInput {
                     }
                 }
                 .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
+                .padding(.horizontal, lead)
             }
             .coordinateSpace(name: "console.row")
             .onPreferenceChange(ConsoleTileFramesKey.self) { tileFrames = $0 }
-            .padding(.horizontal, inset - 8)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
+            .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
             .onChange(of: state.focusedGame?.id) { id in
                 // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
                 // the least that brings it inside, and a new focus replaces the running scroll (held repeats do not queue).
                 guard let id else { return }
                 guard let frame = tileFrames[id] else { proxy.scrollTo(Self.rowCell(id), anchor: .center); return }
-                let rowWidth = size.width - 2 * (inset - 8)
-                let anchor: UnitPoint? = frame.minX < 8 ? .leading : (frame.maxX > rowWidth - 8 ? .trailing : nil)
+                // while arranging a tile is brought to the middle, where a game picked up has room on both sides
+                let anchor: UnitPoint? = frame.minX < safe ? (state.arranging ? .center : .leading)
+                    : (frame.maxX > rowWidth - safe ? (state.arranging ? .center : .trailing) : nil)
                 if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.rowCell(id), anchor: anchor) } }
             }
             .onAppear { if let id = state.focusedGame?.id { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
-            .onChange(of: state.games.map(\.id)) { _ in   // the game being moved stays in view
+            .onChange(of: state.games.map(\.id)) { _ in   // the game being moved stays in view, with room to either side
                 guard let id = state.heldGameID else { return }
-                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id)) }
+                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id), anchor: .center) }
+            }
+            .onChange(of: state.heldGameID) { id in   // a game picked up at the edge of the view comes in before it grows
+                guard let id, let frame = tileFrames[id], frame.minX < safe || frame.maxX > rowWidth - safe else { return }
+                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id), anchor: .center) }
             }
         }
     }

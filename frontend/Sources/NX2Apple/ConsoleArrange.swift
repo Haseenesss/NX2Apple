@@ -4,10 +4,10 @@ import NXLauncher
 /// How a tile looks while the row is arranged (RB, #937). The focused tile rises a little; the one picked up (A) rises further, grows
 /// and casts a shadow, leaving the row, with arrows on the sides it can move to; the others step back while one is held.
 private struct ConsoleArrangeLook: ViewModifier {
-    let arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool
+    let arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat
     func body(content: Content) -> some View {
         content
-            .scaleEffect(held ? 1.08 : 1)
+            .scaleEffect(held ? scale : 1)
             .shadow(color: .black.opacity(held ? 0.6 : 0), radius: held ? 30 : 0, y: held ? 24 : 0)
             .overlay {
                 if held {
@@ -16,7 +16,7 @@ private struct ConsoleArrangeLook: ViewModifier {
                         Spacer(minLength: 0)
                         arrow("chevron.right").opacity(canRight ? 1 : 0)
                     }
-                    .padding(.horizontal, -6)
+                    .padding(.horizontal, -ConsoleArrange.arrowOverhang)
                     .transition(.opacity)
                 }
             }
@@ -34,7 +34,20 @@ private struct ConsoleArrangeLook: ViewModifier {
 }
 
 extension View {
-    func arrangeLook(arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool) -> some View {
-        modifier(ConsoleArrangeLook(arranging: arranging, focused: focused, held: held, anyHeld: anyHeld, canLeft: canLeft, canRight: canRight))
+    func arrangeLook(arranging: Bool, focused: Bool, held: Bool, anyHeld: Bool, canLeft: Bool, canRight: Bool, scale: CGFloat) -> some View {
+        modifier(ConsoleArrangeLook(arranging: arranging, focused: focused, held: held, anyHeld: anyHeld, canLeft: canLeft, canRight: canRight, scale: scale))
+    }
+}
+
+enum ConsoleArrange {
+    /// How far the arrows stand out past a held tile's sides.
+    static let arrowOverhang: CGFloat = 6
+    static let maxScale: CGFloat = 1.08
+    /// How much a held tile grows: up to `maxScale`, less when the room beside a tile at the row's end (`room`, from the tile's side
+    /// to the screen's edge) would not hold the growth and the arrows, so it is never cut at the screen's edge.
+    static func heldScale(width: CGFloat, room: CGFloat) -> CGFloat {
+        guard width > 0 else { return 1 }
+        let grow = max(0, room - arrowOverhang - 4)   // 4 pt left clear
+        return min(maxScale, 1 + 2 * grow / width)
     }
 }
