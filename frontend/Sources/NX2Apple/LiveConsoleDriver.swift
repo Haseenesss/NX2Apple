@@ -158,7 +158,8 @@ struct ConsolePadSnapshot: Equatable {
     func refresh() {
         let focus = state.focusedGameID
         let heroes = Dictionary(state.games.compactMap { g in g.hero.map { (g.id, ($0, g.heroFocus)) } }) { a, _ in a }   // kept across a refresh: no flash
-        let shown = LibraryFilter.load() == .built ? library.games.filter(LibraryFilter.built.includes) : library.games   // the desktop's filter
+        let ordered = LibraryOrder.load().arrange(library.games)   // the desktop row's order (#937)
+        let shown = LibraryFilter.load() == .built ? ordered.filter(LibraryFilter.built.includes) : ordered   // the desktop's filter
         let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); return g })
         state.games = games
         state.focusedGameID = games.contains { $0.id == focus } ? focus : (library.selected.map { $0.id.uuidString }.flatMap { id in games.contains { $0.id == id } ? id : nil } ?? games.first?.id)
@@ -270,7 +271,7 @@ struct ConsolePadSnapshot: Equatable {
                     if let error { self.state.returnFromGame(); self.gameEnded(); self.showToast(error.localizedDescription); return }
                     self.launchedPID = pid
                     self.launchedGame = game
-                    if let pid { GameReturnWatcher.shared.didStart(pid: pid) { [weak self] in self?.gameDidTerminate(pid: pid) } }   // the launcher's one watcher and its switch (ReturnAfterPlay.swift)
+                    if let pid { GameReturnWatcher.shared.didStart(pid: pid) { [weak self] in self?.library.markPlayed(game.id); self?.gameDidTerminate(pid: pid) } }   // the launcher's one watcher and its switch (ReturnAfterPlay.swift)
                     self.state.starting = .opening
                     self.timeoutTask?.cancel()
                     self.timeoutTask = Task { [weak self] in

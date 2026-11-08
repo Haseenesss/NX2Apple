@@ -29,6 +29,7 @@
     {"prefix": "fail.", "suffix": ".risk", "why": "the risk of a fix for each kind of build failure"},
     {"prefix": "fail.", "suffix": ".what", "why": "what happened for each kind of build failure"},
     {"prefix": "filter.", "suffix": "", "why": "the library filters, LauncherView.swift"},
+    {"prefix": "order.", "suffix": "", "why": "the library orders, LibraryOrder in LauncherPage.swift"},
     {"prefix": "free.cost.", "suffix": "", "why": "the cost line of each freeable part, FreeSpace.swift"},
     {"prefix": "free.part.", "suffix": "", "why": "the name of each freeable part, FreeSpace.swift"},
     {"prefix": "key.", "suffix": "", "why": "the name of each keyboard key, Controls.swift"},

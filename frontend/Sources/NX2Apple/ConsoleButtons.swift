@@ -2,7 +2,7 @@ import Foundation
 
 /// Console mode's own buttons go by what is printed on the controller, as Xbox and PlayStation menus do: A (GameController's
 /// buttonA, the bottom face button: Xbox's A, PlayStation's cross) confirms, B (the right one) goes back, Y (the top one) opens a
-/// game's options, + and − (Menu, View) the console's menu, X does nothing. They do not follow the games' button mapping, which
+/// game's options, + and − (Menu, View) the console's menu, R (RB, R1) arranges the row of games, X does nothing. They do not follow the games' button mapping, which
 /// is what the buttons send in games. "Swap A and B in menus" (`ConsoleState.menuSwapAB`, on the button mapping page) makes B
 /// confirm and A go back, as on a Switch. The D-pad and the left stick move the focus.
 enum ConsoleButtons {
@@ -28,7 +28,7 @@ enum ConsoleButtons {
 
     /// What each button does in console mode.
     static func bindings(swapAB: Bool = false) -> [LauncherGamepad.Action: ConsoleInput] {
-        [swapAB ? .b : .a: .activate, swapAB ? .a : .b: .back, .y: .options, .plus: .menu, .select: .menu]
+        [swapAB ? .b : .a: .activate, swapAB ? .a : .b: .back, .y: .options, .plus: .menu, .select: .menu, .r: .arrange]
     }
 
     /// The console's input for a press.
@@ -57,6 +57,7 @@ enum ConsoleButtons {
         case .y: return .y
         case .plus: return .menu
         case .select: return .select
+        case .r: return .shoulderR
         default: return nil
         }
     }
@@ -75,6 +76,7 @@ extension ConsoleGlyphs {
         case .y: return .letter("Y")
         case .menu: return .letter("+")
         case .select: return .letter("\u{2212}")
+        case .shoulderR: return .letter("R")
         }
     }
 }

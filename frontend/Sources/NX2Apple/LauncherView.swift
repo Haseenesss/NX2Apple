@@ -95,25 +95,35 @@ struct LauncherView: View {
     }
 
     @State var libraryFilter: LibraryFilter = LibraryFilter.load()
+    /// The row's order (#937), shared with console mode: arranging there makes it Custom, which the desktop shows as neither choice.
+    /// A state of its own, saved on change and read again when the defaults change, so a choice here animates as the filter does.
+    @State var libraryOrder: LibraryOrder = LibraryOrder.load()
 
     func setLibraryFilter(_ filter: LibraryFilter) {
         guard filter != libraryFilter else { return }
         withAnimation(.easeInOut(duration: 0.2)) { libraryFilter = filter }
         filter.save()
-        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused)
+        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused, order: libraryOrder)
         if after.selectedID != library.selectedID { library.selectedID = after.selectedID }
         if after.focused != padFocus.focused { padFocus.focused = after.focused }
     }
 
+    /// Recent or Name; either also ends an order arranged in console mode.
+    func setLibraryOrder(_ order: LibraryOrder) {
+        guard order != libraryOrder else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { libraryOrder = order }
+        order.save()
+    }
+
     var filteredGames: [LibraryGame] {
-        libraryFilter.visibleGames(library.games, matching: search)
+        libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder)
     }
 
     /// The hero's game: the selection, unless the filter hides it, then the first game the filter shows.
     var heroGame: LibraryGame? {
         guard libraryFilter != .owned else { return library.selected }
         if let selected = library.selected, libraryFilter.includes(selected) { return selected }
-        return libraryFilter.visibleGames(library.games).first
+        return libraryFilter.visibleGames(library.games, order: libraryOrder).first
     }
 
     var body: some View {
@@ -227,6 +237,10 @@ struct LauncherView: View {
             page = route.page
             if let id = route.game { library.selectedID = id }
             DispatchQueue.main.async { BuildNotifier.shared.route = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in
+            let saved = LibraryOrder.load()   // console mode arranged the row (Custom), or another window chose
+            if saved != libraryOrder { withAnimation(.easeInOut(duration: 0.2)) { libraryOrder = saved } }
         }
         .onChange(of: library.games) { _ in
             refreshArtwork()
@@ -681,7 +695,7 @@ struct LauncherView: View {
                     MainActor.assumeIsolated {
                         launching = false
                         if let error { launchError = error.localizedDescription }
-                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid) }   // ReturnAfterPlay.swift
+                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid) { library.markPlayed(game.id) } }   // ReturnAfterPlay.swift; the Recent order puts it first
                     }
                 }
             }

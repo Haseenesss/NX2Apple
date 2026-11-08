@@ -23,6 +23,9 @@ import NXLauncher
     func requestAssignment(controllerID: String) { base.requestAssignment(controllerID: controllerID) }
     func identify(controllerID: String) { base.identify(controllerID: controllerID) }
     func openMenu() { base.openMenu() }
+    func toggleArranging() { base.toggleArranging() }
+    func toggleHold() { base.toggleHold() }
+    func moveHeld(_ step: Int) { base.moveHeld(step) }
     func openGeneral() { base.openGeneral() }
     func openCloudSaves() { base.openCloudSaves() }
     func openLanguage() { base.openLanguage() }

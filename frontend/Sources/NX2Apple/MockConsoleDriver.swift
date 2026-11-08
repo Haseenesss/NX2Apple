@@ -171,6 +171,9 @@ import NXLauncher
         showToast(String(format: L10n.string("console.identifyingName", lang), controller.name))
     }
     func openMenu() { state.openMenu() }
+    func toggleArranging() { state.toggleArranging() }
+    func toggleHold() { state.toggleHold() }
+    func moveHeld(_ step: Int) { _ = state.moveHeld(step) }
     func openGeneral() { state.openGeneral() }
     func openLanguage() { state.openLanguage() }
     func setMenuSwapAB(_ on: Bool) {

@@ -169,6 +169,13 @@ extension LauncherView {
             HStack(spacing: 16) {
                 Text(loc.t("library.collection")).font(.manrope(28, .bold)).tracking(-0.6)
                 Spacer()
+                LauncherSegmented(options: LibraryOrder.choices.map { ($0.rawValue, loc.t($0.labelKey)) },
+                                  selection: libraryOrder.rawValue) { setLibraryOrder(LibraryOrder(rawValue: $0) ?? .recent) }
+                    .frame(width: LauncherControl.width)
+                    .help(loc.t("order.help"))
+                    .padTarget("library.order", scope: "main", radius: 17,
+                               activate: { setLibraryOrder(libraryOrder == .recent ? .name : .recent) },
+                               adjust: { setLibraryOrder($0 > 0 ? .name : .recent) })
                 LauncherSegmented(options: LibraryFilter.allCases.map { ($0.rawValue, loc.t($0.labelKey)) },
                                   selection: libraryFilter.rawValue) { setLibraryFilter(LibraryFilter(rawValue: $0) ?? .owned) }
                     .frame(width: LauncherControl.width)

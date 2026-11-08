@@ -57,8 +57,32 @@ import NXModel
     func testGamepadActionsMapToConsoleInputs() {
         let expected: [(LauncherGamepad.Action, ConsoleInput?)] = [
             (.left, .left), (.right, .right), (.up, .up), (.down, .down), (.a, .activate), (.b, .back),
-            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, nil)]
+            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, .arrange)]
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
+    }
+
+    /// #937: arranging moves the held game within its group (games ready on this Mac stay first) and not past the row's ends.
+    func testArrangingMovesTheHeldGameWithinItsGroup() {
+        func game(_ id: String, _ status: ConsoleGame.Status) -> ConsoleGame {
+            ConsoleGame(id: id, title: id, version: "", platforms: [.mac], artwork: nil, status: status)
+        }
+        var state = ConsoleState()
+        state.games = [game("a", .ready), game("b", .ready), game("c", .needsBuild)]
+        state.toggleHold()
+        XCTAssertNil(state.heldGameID, "nothing is picked up outside arranging")
+        state.toggleArranging(); state.focus("a"); state.toggleHold()
+        XCTAssertEqual(state.heldGameID, "a")
+        XCTAssertFalse(state.canMoveHeld(-1), "not past the start")
+        XCTAssertEqual(state.moveHeld(1), ["a", "b", "c"], "the row before the move")
+        XCTAssertEqual(state.games.map(\.id), ["b", "a", "c"])
+        XCTAssertNil(state.moveHeld(1), "a ready game does not go among the games still to build")
+        XCTAssertEqual(state.games.map(\.id), ["b", "a", "c"])
+        state.back()
+        XCTAssertNil(state.heldGameID); XCTAssertTrue(state.arranging)
+        state.back()
+        XCTAssertFalse(state.arranging); XCTAssertNil(state.presentedSheet, "B ends arranging without asking to leave")
+        state.sheets = [.menu]; state.toggleArranging()
+        XCTAssertFalse(state.arranging, "not over a sheet")
     }
 
     /// Hosts the console view and drives it only through `gamepad.perform`, as Gamepad.swift does on a button edge.
@@ -106,8 +130,23 @@ import NXModel
         XCTAssertNil(driver.state.startingGameID, "and not to a game")
         gamepad.perform(.b); settle()
         XCTAssertNil(driver.state.presentedSheet)
-        gamepad.perform(.l); gamepad.perform(.r); settle()
-        XCTAssertNil(driver.state.presentedSheet, "L and R do nothing")
+        gamepad.perform(.l); settle()
+        XCTAssertNil(driver.state.presentedSheet, "L does nothing")
+        // R arranges the row (#937): A picks the focused game up and B puts it down, B again or R ends arranging
+        let focused = driver.state.focusedGame?.id
+        gamepad.perform(.r); settle()
+        XCTAssertTrue(driver.state.arranging, "R arranges the row")
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.heldGameID, focused, "A picks the focused game up")
+        XCTAssertNil(driver.state.startingGameID, "and does not start it")
+        gamepad.perform(.b); settle()
+        XCTAssertNil(driver.state.heldGameID, "B puts it down")
+        XCTAssertTrue(driver.state.arranging)
+        gamepad.perform(.b); settle()
+        XCTAssertFalse(driver.state.arranging, "B again ends arranging")
+        XCTAssertNil(driver.state.presentedSheet)
+        gamepad.perform(.r); settle(); gamepad.perform(.r); settle()
+        XCTAssertFalse(driver.state.arranging, "R again ends it too")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .confirmExit, "B from Home asks before leaving")
         XCTAssertFalse(driver.state.exited)

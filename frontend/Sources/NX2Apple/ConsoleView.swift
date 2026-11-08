@@ -5,11 +5,11 @@ import NXLauncher
 
 /// Semantic inputs from a future controller adapter; the view does not discover hardware.
 enum ConsoleInput {
-    case left, right, up, down, activate, back, options, menu
+    case left, right, up, down, activate, back, options, menu, arrange
 
     /// The launcher's controller path (Gamepad.swift) in console terms: the D-pad and left stick move, A activates, B backs out,
     /// Y opens the focused game's options, the menu button (+, Menu, Options) and the Select-type button (−, View, Share,
-    /// Create) the console's menu. The same button again closes what it opened. X, L and R are not used.
+    /// Create) the console's menu, R (RB, R1) arranges the row. The same button again closes what it opened. X and L are not used.
     init?(_ action: LauncherGamepad.Action) {
         switch action {
         case .left: self = .left
@@ -20,7 +20,8 @@ enum ConsoleInput {
         case .b: self = .back
         case .y: self = .options
         case .plus, .select: self = .menu
-        case .x, .l, .r: return nil
+        case .r: self = .arrange
+        case .x, .l: return nil
         }
     }
 }
@@ -159,8 +160,6 @@ enum ConsoleInput {
                             // and the row below never moves, whatever the title's length.
                             ZStack(alignment: .bottomLeading) {
                             VStack(alignment: .leading, spacing: compact ? 14 : 20) {
-                                Text(t("console.library")).font(.manrope(compact ? 14 : 18, .semibold))
-                                    .tracking(2).foregroundStyle(LauncherPalette.cream.opacity(0.75))
                                 Text(game.title).font(.manrope(compact ? 36 : min(64, size.width / 24), .bold))
                                     .tracking(-1.6).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                                     .shadow(color: .black.opacity(0.45), radius: 12)
@@ -174,7 +173,7 @@ enum ConsoleInput {
                             }
                             .animation(.easeInOut(duration: 0.12), value: game.id)
                             .padding(.horizontal, inset)
-                            .frame(height: compact ? 175 : 100 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
+                            .frame(height: compact ? 140 : 60 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
                         }
                         gameRow(size: size, compact: compact, inset: inset)
                     }
@@ -186,6 +185,11 @@ enum ConsoleInput {
             if !state.games.isEmpty { hintBar(compact: compact, width: size.width).padding(.horizontal, inset).padding(.bottom, compact ? 20 : 32) }
         }
         .padScope("console", pad)
+        // arranging lifts the title and the row a little (the row takes room above it for the game picked up), and a game picked up
+        // or moved springs into place
+        .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: state.arranging)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: state.heldGameID)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.8), value: state.games.map(\.id))
     }
 
     /// One fixed-height status row: the controller chips (scrolling sideways inside their own group) to the left of the clock.
@@ -214,13 +218,16 @@ enum ConsoleInput {
                 HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
                     ForEach(state.games) { game in
                         let selected = state.focusedGame?.id == game.id
-                        Button { driver.focus(game.id); driver.play(game.id) } label: {
+                        let held = state.heldGameID == game.id
+                        Button { driver.focus(game.id); if state.arranging { driver.toggleHold() } else { driver.play(game.id) } } label: {
                             ConsoleGameTile(game: game, compact: compact, lang: lang)
                                 .frame(width: width)
                                 .contentShape(RoundedRectangle(cornerRadius: 16))
                         }
                         .buttonStyle(.plain)
                         .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
+                        .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
+                                     canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1))
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
                         .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
                         .accessibilityHint(t("console.playHint"))
@@ -231,7 +238,7 @@ enum ConsoleInput {
                         .id(Self.rowCell(game.id))
                     }
                 }
-                .padding(.vertical, 12)
+                .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
             }
             .coordinateSpace(name: "console.row")
             .onPreferenceChange(ConsoleTileFramesKey.self) { tileFrames = $0 }
@@ -246,6 +253,10 @@ enum ConsoleInput {
                 if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.rowCell(id), anchor: anchor) } }
             }
             .onAppear { if let id = state.focusedGame?.id { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
+            .onChange(of: state.games.map(\.id)) { _ in   // the game being moved stays in view
+                guard let id = state.heldGameID else { return }
+                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.rowCell(id)) }
+            }
         }
     }
 
@@ -254,10 +265,17 @@ enum ConsoleInput {
     private func hintBar(compact: Bool, width: CGFloat) -> some View {
         let items = {
             Group {
-                hint(.activate, "console.play", compact: compact)
-                hint(.options, "console.options", compact: compact)
-                hint(.menu, "console.menu", compact: compact)
-                hint(.back, "console.desktop", compact: compact)
+                if state.arranging {
+                    if state.heldGameID != nil { hint(glyph: .symbol("arrow.left.and.right.circle"), "console.arrange.move", compact: compact) }
+                    hint(.activate, state.heldGameID == nil ? "console.arrange.pickUp" : "console.arrange.putDown", compact: compact)
+                    hint(.arrange, "console.arrange.done", compact: compact)
+                } else {
+                    hint(.activate, "console.play", compact: compact)
+                    hint(.options, "console.options", compact: compact)
+                    hint(.arrange, "console.arrange", compact: compact)
+                    hint(.menu, "console.menu", compact: compact)
+                    hint(.back, "console.desktop", compact: compact)
+                }
             }
         }
         return VStack(spacing: 20) {
@@ -275,9 +293,12 @@ enum ConsoleInput {
     /// A button and what it does, as a hint only: not a control, so the focus never lands on it, and all alike (the focus ring shows
     /// what A plays).
     private func hint(_ role: ConsoleGlyphs.Role, _ key: String, compact: Bool) -> some View {
-        let input: ConsoleInput = switch role { case .back: .back; case .options: .options; case .menu: .menu; default: .activate }
-        let glyph = glyphs.glyph(for: role, on: ConsoleButtons.button(for: input, swapAB: state.menuSwapAB))   // A or B, as the swap has it
-        return HStack(alignment: .center, spacing: 10) { ConsoleGlyphView(glyph: glyph, size: compact ? 20 : 24); Text(t(key)).lineLimit(1).minimumScaleFactor(0.8) }
+        let input: ConsoleInput = switch role { case .back: .back; case .options: .options; case .menu: .menu; case .arrange: .arrange; default: .activate }
+        return hint(glyph: glyphs.glyph(for: role, on: ConsoleButtons.button(for: input, swapAB: state.menuSwapAB)), key, compact: compact)   // A or B, as the swap has it
+    }
+
+    private func hint(glyph: ConsoleGlyphs.Glyph, _ key: String, compact: Bool) -> some View {
+        HStack(alignment: .center, spacing: 10) { ConsoleGlyphView(glyph: glyph, size: compact ? 20 : 24); Text(t(key)).lineLimit(1).minimumScaleFactor(0.8) }
             .font(.manrope(compact ? 15 : 20, .semibold))
             .padding(.horizontal, compact ? 12 : 8).frame(maxWidth: compact ? .infinity : nil, minHeight: 48)
             .foregroundStyle(.white.opacity(0.75))
@@ -613,6 +634,7 @@ enum ConsoleInput {
     }
     private func handle(_ input: ConsoleInput) {
         if editingOption != nil, input == .back || input == .activate { editingOption = nil; return }   // A or B lets a slider go
+        if state.arranging, state.presentedSheet == nil { arrange(input); return }
         if input == .back { driver.back(); return }
         if state.exited { if input == .activate { driver.returnFromGame() }; return }
         guard state.startingGameID == nil else { return }
@@ -631,7 +653,27 @@ enum ConsoleInput {
             if case .options = state.presentedSheet { driver.back() }
             else if state.presentedSheet == nil, let id = state.focusedGame?.id { driver.openOptions(id) }
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
+        case .arrange:
+            guard state.presentedSheet == nil, let id = state.focusedGame?.id else { return }
+            driver.toggleArranging(); pad.focused = "console.game." + id
         case .back: break
+        }
+    }
+
+    /// Arranging the row: A picks the focused game up or puts it down, left and right move the one held (or the focus, with none
+    /// held), B puts it down and then ends arranging, as RB does at once. Up, down, Y and the menu wait until it ends.
+    private func arrange(_ input: ConsoleInput) {
+        pad.show(default: pad.focused)
+        switch input {
+        case .arrange: driver.toggleArranging()
+        case .back: driver.back()
+        case .activate: driver.toggleHold()
+        case .left, .right:
+            let step = input == .left ? -1 : 1
+            if state.heldGameID != nil { driver.moveHeld(step); return }   // the focus stays on the game, which moves
+            var snapshot = state; snapshot.moveFocus(step)
+            if let id = snapshot.focusedGame?.id { driver.focus(id); pad.focused = "console.game." + id }
+        default: break
         }
     }
 }

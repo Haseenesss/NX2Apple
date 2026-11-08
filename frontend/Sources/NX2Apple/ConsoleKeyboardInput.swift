@@ -33,6 +33,7 @@ struct ConsoleKeyboardInput: NSViewRepresentable {
                 switch event.charactersIgnoringModifiers?.lowercased() {
                 case "y", "o": return .options
                 case "m", "+", "=": return .menu
+                case "r": return .arrange
                 default: return nil
                 }
             }

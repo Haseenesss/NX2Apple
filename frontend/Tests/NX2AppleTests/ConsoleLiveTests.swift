@@ -223,6 +223,28 @@ import SwiftUI
     /// to the standard layout, and the sheet shows what the layout sends.
     /// A game's options page keeps what it read when it opened (its cloud save, whether Reset applies) across a rebuilt list, and
     /// Reset shows as soon as an option differs.
+    /// #937: a game moved while arranging stays there: the library keeps the row as its Custom order, which the desktop shares.
+    func testArrangingKeepsTheOrderInTheLibrary() throws {
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: LibraryOrder.defaultsKey) }
+        let file = temporary.appendingPathComponent("library.json")
+        try JSONEncoder().encode(["Zelda", "Alba", "Mario"].enumerated().map { LibraryGame(titleID: "01000000000\($0.offset)0000", name: $0.element) })
+            .write(to: file)
+        let library = GameLibrary(file: file)
+        let driver = LiveConsoleDriver(library: library, controls: ControlLayout(defaults: TestDefaults.make("ConsoleLiveTests")), repo: { "" },
+                                       lang: { .en }, labels: { L10n.string($0, .en) }, pads: { [] }, launch: { _, _, done in done(nil, nil) },
+                                       artwork: { _, _ in nil }, startingTimeout: 0.2, observeSystem: false)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Alba", "Mario", "Zelda"], "Recent with nothing played yet: by name")
+        driver.toggleArranging()
+        driver.focus(try XCTUnwrap(driver.state.games.first?.id))
+        driver.toggleHold()
+        driver.moveHeld(1)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Mario", "Alba", "Zelda"])
+        XCTAssertEqual(LibraryOrder.load(), .custom)
+        XCTAssertEqual(library.games.map(\.name), ["Mario", "Alba", "Zelda"])
+        driver.refresh()
+        XCTAssertEqual(driver.state.games.map(\.title), ["Mario", "Alba", "Zelda"], "a rebuilt list keeps it")
+    }
+
     func testOpenOptionsKeepTheirDetails() throws {
         let (driver, _, _) = try makeDriver()
         let id = try XCTUnwrap(driver.state.games.first?.id)

@@ -241,6 +241,10 @@ struct ConsoleState {
     var starting: ConsoleStarting = .preparing
     var assigningPlayer: Int?
     var startingGameID: String?
+    /// Arranging the row (RB, #937): A picks the focused game up and puts it down, left and right move the one held. A game moves
+    /// within its group, so the games ready on this Mac stay first. The order is kept as the library's Custom order.
+    var arranging = false
+    var heldGameID: String?
     var exited = false
     var time: Date = Date()
     var presentedSheet: ConsoleSheet? { sheets.last }
@@ -255,6 +259,27 @@ struct ConsoleState {
         guard !games.isEmpty else { return }
         let index = games.firstIndex { $0.id == focusedGame?.id } ?? 0
         focus(games[min(max(index + step, 0), games.count - 1)].id)
+    }
+    mutating func toggleArranging() {
+        guard arranging || (!games.isEmpty && presentedSheet == nil && startingGameID == nil && !exited) else { return }
+        arranging.toggle()
+        heldGameID = nil
+    }
+    mutating func toggleHold() {
+        guard arranging, let id = focusedGame?.id else { return }
+        heldGameID = heldGameID == id ? nil : id
+    }
+    /// Whether the held game can go one place left (-1) or right (+1): not past the row's end, nor out of its group.
+    func canMoveHeld(_ step: Int) -> Bool {
+        guard arranging, let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }), games.indices.contains(at + step) else { return false }
+        return (games[at + step].status == .ready) == (games[at].status == .ready)
+    }
+    /// Moves the held game one place. Returns the row's ids before the move, which the driver keeps the move by, or nil when it cannot move.
+    mutating func moveHeld(_ step: Int) -> [String]? {
+        guard canMoveHeld(step), let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }) else { return nil }
+        let before = games.map(\.id)
+        games.swapAt(at, at + step)
+        return before
     }
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
@@ -334,6 +359,7 @@ struct ConsoleState {
     mutating func back() {
         guard !exited else { return }
         if startingGameID != nil { return } // the driver ends Starting when the game window appears
+        if arranging, sheets.isEmpty { if heldGameID != nil { heldGameID = nil } else { arranging = false }; return }   // B puts the game down, then ends arranging
         if presentedSheet == .mapping, mappingRow != nil { mappingRow = nil; return }   // B in a button's choices goes back to the list
         if presentedSheet == .mapping, mappingChanged { sheets.append(.confirmMapping); return }   // asks before leaving changes
         if presentedSheet == .mapping { mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
@@ -343,7 +369,7 @@ struct ConsoleState {
         }
         else { confirmExit() }   // B on the home screen asks before leaving
     }
-    mutating func exitToDesktop() { exited = true; sheets = []; startingGameID = nil; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil; mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
+    mutating func exitToDesktop() { exited = true; sheets = []; arranging = false; heldGameID = nil; startingGameID = nil; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil; mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
     mutating func returnFromGame() { exited = false; startingGameID = nil; sheets = []; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil }
     mutating func setOption(game id: String, setting env: String, value: String) {
         guard !exited, startingGameID == nil, let i = games.firstIndex(where: { $0.id == id }),
@@ -426,6 +452,10 @@ struct ConsoleState {
     func consumePress(controllerID: String, isBack: Bool) -> Bool
     /// The Home button hint's button: opens the system's Home button settings and closes the hint.
     func openHomeButtonSettings()
+    /// Arranging the row (RB): on and off, pick up or put down the focused game, move the one held (ConsoleState.arranging).
+    func toggleArranging()
+    func toggleHold()
+    func moveHeld(_ step: Int)
 }
 
 extension ConsoleDriver {
@@ -455,6 +485,9 @@ extension ConsoleDriver {
     func openGamePad(_ gameID: String) {}
     func consumePress(controllerID: String, isBack: Bool) -> Bool { false }
     func openHomeButtonSettings() { back() }
+    func toggleArranging() {}
+    func toggleHold() {}
+    func moveHeld(_ step: Int) {}
 }
 
 /// Shared choice/range/toggle stepping for mouse, d-pad and keyboard. No settings store is touched.
