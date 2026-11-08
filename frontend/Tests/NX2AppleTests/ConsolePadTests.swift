@@ -122,6 +122,27 @@ import NXModel
         XCTAssertEqual(released, 1, "once")
     }
 
+    /// The row scrolls as the focus walks along it: the focused game is always in view. It sits in a vertical ScrollView, where
+    /// ScrollViewReader did not scroll it, so the AppKit scroll view is moved directly (RowScroller.reveal).
+    @MainActor func testTheRowScrollsToTheFocusedGame() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1000, height: 650))
+        let window = OffscreenWindow(size: NSSize(width: 1000, height: 650), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)); host.layoutSubtreeIfNeeded() }
+        settle()
+        for _ in 0..<6 { gamepad.perform(.right); settle() }
+        let scroll = try XCTUnwrap(Self.scrollViews(in: host).first { $0.hasHorizontalScroller || ($0.documentView?.frame.width ?? 0) > $0.contentView.bounds.width + 1 })
+        XCTAssertGreaterThan(scroll.contentView.bounds.minX, 100, "the row scrolled to the sixth game")
+    }
+
+    private static func scrollViews(in view: NSView) -> [NSScrollView] {
+        ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
     /// The row shows about three and a half games, so the next one shows at the edge; a game cut there is drawn smaller and fainter.
     func testTheRowShowsThatMoreGamesFollow() {
         XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1792), 380, "a big screen: the widest tile")

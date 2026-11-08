@@ -213,16 +213,13 @@ extension LauncherView {
                     .onPreferenceChange(RowOriginKey.self) { libraryRowOriginX = $0 }
                     .onPreferenceChange(RowFramesKey.self) { frames in cardFrames = frames; libraryDrag.framesChanged(frames); followDrag() }
                     .onAppear {
-                        libraryDrag.onEdge = { way in   // near an end of the row while dragging: bring in the next card that way
-                            let rowWidth = width - 68 + 2 * Self.ringRoom
-                            guard let id = RowDrag.nextCard(way, order: filteredGames.map(\.id.uuidString), frames: cardFrames, rowWidth: rowWidth) else { return }
-                            withAnimation(.easeOut(duration: 0.28)) { proxy.scrollTo("card." + id, anchor: way > 0 ? .trailing : .leading) }
-                        }
+                        libraryDrag.onEdge = { way in row.scroll(by: CGFloat(way) * step) }   // near an end while dragging: one card that way
                     }
                     .animation(.spring(response: 0.34, dampingFraction: 0.8), value: games.map(\.id))
                     .onChange(of: padFocus.focused) { id in   // the focused card scrolls into the row's view
-                        guard let id, id.hasPrefix("card.") else { return }
-                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+                        // the AppKit scroll view directly: ScrollViewReader does not scroll a row inside a vertical ScrollView
+                        guard let id, id.hasPrefix("card."), let frame = cardFrames[String(id.dropFirst("card.".count))] else { return }
+                        row.reveal(minX: frame.minX, maxX: frame.maxX, margin: 24)
                     }
                 }
                     .overlay(alignment: .topLeading) {

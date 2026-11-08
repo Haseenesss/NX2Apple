@@ -13,7 +13,8 @@ import NXLauncher
     let inset: CGFloat
     @StateObject private var drag = RowDrag()
     @State private var tileFrames: [String: CGRect] = [:]
-    @State private var rowOriginX: CGFloat = 0   // where the row starts in the window, for the mouse (RowDrag)
+    @State private var rowOriginX: CGFloat = 0
+    @StateObject private var scroller = RowScroller()   // where the row starts in the window, for the mouse (RowDrag)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var state: ConsoleState { driver.state }
@@ -31,8 +32,7 @@ import NXLauncher
         let rowWidth = size.width - 2 * clip
         let safe = 8 + lead   // a tile closer than this to the scroll area's edge is brought in
         let order = state.games.map(\.id)
-        return ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
+        return ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: spacing) {
                     ForEach(state.games) { game in
                         tile(game, width: width, scale: heldScale)
@@ -51,6 +51,7 @@ import NXLauncher
                 }
                 .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
                 .padding(.horizontal, lead)
+                .background(EnclosingScrollView(row: scroller))   // the AppKit scroll view, moved directly (RowScroller.reveal)
             }
             .coordinateSpace(name: "console.row")
             .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
@@ -62,33 +63,36 @@ import NXLauncher
             }
             .padding(.horizontal, clip)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
             .onAppear {
-                if let id = state.focusedGame?.id { proxy.scrollTo(Self.cell(id), anchor: .center) }
-                drag.onEdge = { way in   // near an end of the row while dragging: bring in the next game that way
-                    guard let id = RowDrag.nextCard(way, order: driver.state.games.map(\.id), frames: tileFrames, rowWidth: rowWidth) else { return }
-                    withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.28)) { proxy.scrollTo(Self.cell(id), anchor: way > 0 ? .trailing : .leading) }
-                }
+                DispatchQueue.main.async { reveal(state.focusedGame?.id, margin: safe, center: true, animated: false) }
+                drag.onEdge = { way in scroller.scroll(by: CGFloat(way) * (width + spacing + 16)) }   // near an end while dragging: one game that way
             }
             .onChange(of: state.focusedGame?.id) { id in
                 // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
-                // the least that brings it inside, and a new focus replaces the running scroll (held repeats do not queue).
-                guard let id, !drag.active else { return }
-                guard let frame = tileFrames[id] else { proxy.scrollTo(Self.cell(id), anchor: .center); return }
-                // while arranging a tile is brought to the middle, where a game picked up has room on both sides
-                let anchor: UnitPoint? = frame.minX < safe ? (state.arranging ? .center : .leading)
-                    : (frame.maxX > rowWidth - safe ? (state.arranging ? .center : .trailing) : nil)
-                if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.cell(id), anchor: anchor) } }
+                // the least that brings it inside; while arranging it is brought to the middle, where a game picked up has room
+                guard !drag.active else { return }
+                reveal(id, margin: safe, center: state.arranging && !isInside(id, margin: safe, rowWidth: rowWidth))
             }
             .onChange(of: state.games.map(\.id)) { _ in   // the game being moved stays in view, with room to either side
                 guard let id = state.heldGameID, !drag.active else { return }   // a drag scrolls at the ends instead
-                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.cell(id), anchor: .center) }
+                DispatchQueue.main.async { reveal(id, margin: safe, center: true) }   // once its new frame is in
             }
             .onChange(of: state.heldGameID) { id in   // a game picked up at the edge of the view comes in before it grows
-                guard let id, !drag.active, let frame = tileFrames[id], frame.minX < safe || frame.maxX > rowWidth - safe else { return }
-                withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) { proxy.scrollTo(Self.cell(id), anchor: .center) }
+                guard let id, !drag.active, !isInside(id, margin: safe, rowWidth: rowWidth) else { return }
+                reveal(id, margin: safe, center: true)
             }
             .onChange(of: state.arranging) { on in if !on, drag.active { drag.end() } }
             .onDisappear { drag.end() }
-        }
+    }
+
+    /// Scrolls the row so the game's tile is in view (RowScroller.reveal), by where its tile is now.
+    private func reveal(_ id: String?, margin: CGFloat, center: Bool, animated: Bool = true) {
+        guard let id, let frame = tileFrames[id] else { return }
+        scroller.reveal(minX: frame.minX, maxX: frame.maxX, margin: margin, center: center, animated: animated && !reduceMotion)
+    }
+
+    private func isInside(_ id: String?, margin: CGFloat, rowWidth: CGFloat) -> Bool {
+        guard let id, let frame = tileFrames[id] else { return true }
+        return frame.minX >= margin && frame.maxX <= rowWidth - margin
     }
 
     private func tile(_ game: ConsoleGame, width: CGFloat, scale: CGFloat) -> some View {

@@ -8,6 +8,9 @@ package final class RowScroller: ObservableObject {
     @Published package private(set) var canForward = false
     private weak var scrollView: NSScrollView?
     private var observers: [NSObjectProtocol] = []
+    /// A mouse's wheel turned over the row scrolls it sideways (a row has nowhere to go up or down). A trackpad's two-finger swipe,
+    /// which scrolls sideways by itself, is left alone.
+    private var wheelMonitor: Any?
 
     package func attach(_ view: NSScrollView) {
         guard view !== scrollView else { return update() }
@@ -22,9 +25,21 @@ package final class RowScroller: ObservableObject {
             NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in self?.update() }
         }
         update()
+        if wheelMonitor == nil {
+            wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let view = self.scrollView, let window = view.window, event.window === window,
+                      !event.hasPreciseScrollingDeltas, event.scrollingDeltaX == 0, event.scrollingDeltaY != 0,
+                      view.bounds.contains(view.convert(event.locationInWindow, from: nil)) else { return event }
+                self.scroll(by: -event.scrollingDeltaY * 16, animated: false)
+                return nil
+            }
+        }
     }
 
-    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        if let wheelMonitor { NSEvent.removeMonitor(wheelMonitor) }
+    }
 
     private func update() {
         guard let view = scrollView, let document = view.documentView else { return }
@@ -43,6 +58,44 @@ package final class RowScroller: ObservableObject {
             context.duration = 0.35
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.minY))
+        }
+        view.reflectScrolledClipView(clip)
+    }
+
+    /// Brings a card into view: `minX...maxX` is where it is drawn now, in the scroll view's own coordinates (a SwiftUI coordinate
+    /// space on the ScrollView). It scrolls by the least that leaves `margin` beside it, or puts it in the middle (`center`). The
+    /// AppKit scroll view is moved directly: SwiftUI's ScrollViewReader did not scroll a horizontal row inside a vertical
+    /// ScrollView (console mode's row of games).
+    package func reveal(minX: CGFloat, maxX: CGFloat, margin: CGFloat, center: Bool = false, animated: Bool = true) {
+        guard let view = scrollView else { return }
+        let x = view.contentView.bounds.minX, width = view.contentView.bounds.width
+        let target: CGFloat
+        if center { target = x + (minX + maxX) / 2 - width / 2 }
+        else if minX < margin { target = x + minX - margin }
+        else if maxX > width - margin { target = x + maxX - width + margin }
+        else { return }
+        scroll(to: target, animated: animated)
+    }
+
+    /// Scrolls by `distance` (a card's width while a card is dragged to the row's end).
+    package func scroll(by distance: CGFloat, animated: Bool = true) {
+        guard let view = scrollView else { return }
+        scroll(to: view.contentView.bounds.minX + distance, animated: animated)
+    }
+
+    private func scroll(to x: CGFloat, animated: Bool) {
+        guard let view = scrollView, let document = view.documentView else { return }
+        let clip = view.contentView
+        let target = min(max(0, x), max(0, document.frame.width - clip.bounds.width))
+        guard abs(target - clip.bounds.minX) > 0.5 else { return }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.minY))
+            }
+        } else {
+            clip.setBoundsOrigin(NSPoint(x: target, y: clip.bounds.minY))
         }
         view.reflectScrolledClipView(clip)
     }
