@@ -166,6 +166,8 @@
   "console.broken": "This game needs attention in desktop mode.",
   "console.build.game": "a game",
   "console.build.title": "Building %@",
+  "console.building": "Building",
+  "console.buildingNote": "This game is being built on your Mac. It can be played here as soon as the build is done.",
   "console.charging": "Charging",
   "console.cheats.noBuild": "Build this game on the desktop first to switch its cheats.",
   "console.cheats.noFile": "No cheats for this version yet. Import them on the desktop’s Cheats page.",

@@ -182,7 +182,7 @@ extension LauncherView {
                     .padTarget("library.filter", scope: "main", radius: 17,
                                activate: { setLibraryFilter(libraryFilter == .owned ? .built : .owned) },
                                adjust: { setLibraryFilter($0 > 0 ? .built : .owned) })
-                Text(String(format: loc.t("library.gameCount"), libraryFilter == .owned ? library.games.count : library.games.filter(libraryFilter.includes).count))
+                Text(String(format: loc.t("library.gameCount"), libraryFilter == .owned ? library.games.count : library.games.filter { libraryFilter.includes($0, building: buildingGameID) }.count))
                     .font(.manrope(12)).foregroundStyle(.secondary)
             }
             if games.isEmpty {
@@ -193,6 +193,7 @@ extension LauncherView {
                         HStack(alignment: .top, spacing: 14) {
                             ForEach(games) { game in
                                 let _ = LauncherWork.count(.card)
+                                let look = cardLook(game)
                                 Button { library.selectedID = game.id } label: {
                                     VStack(alignment: .leading, spacing: 8) {
                                         ZStack {
@@ -204,6 +205,8 @@ extension LauncherView {
                                             }
                                         }
                                         .frame(width: cardWidth, height: cardWidth / 1.8).clipped()
+                                        .coverLook(look, percent: look.building ? buildProgress.map { "\(Int($0 * 100))%" } : nil,
+                                                   tint: LauncherPalette.building)
                                         .clipShape(RoundedRectangle(cornerRadius: 5))
                                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(
                                             game.id == heroID ? LauncherPalette.cream : .clear, lineWidth: 2))
@@ -243,6 +246,13 @@ extension LauncherView {
             }
         }
         .padding(.horizontal, 34).padding(.top, 8).padding(.bottom, 22)
+    }
+
+    /// A card's cover: in colour with a build (for this Mac or an iPhone: either one opens from here), grey without, and the build's
+    /// progress over it while this game builds, the activity bar's figure (CoverLook).
+    func cardLook(_ game: LibraryGame) -> CoverLook {
+        let building = m.running && activeBuildID == game.id
+        return CoverLook(built: game.isReady || game.hasIOSBuild, building: building, fraction: building ? buildProgress : nil)
     }
 
     /// A round button floating over the row's edge, centred on the artwork, shown while the row scrolls that way.

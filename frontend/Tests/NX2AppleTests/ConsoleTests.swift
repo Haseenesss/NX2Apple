@@ -198,7 +198,7 @@ import NXModel
                 XCTAssertNotEqual(L10n.string(key, lang), key)
             }
         }
-        for status in [ConsoleGame.Status.ready, .needsBuild, .needsData, .iphoneOnly, .broken("")] {
+        for status in [ConsoleGame.Status.ready, .building, .needsBuild, .needsData, .iphoneOnly, .broken("")] {
             XCTAssertNotNil(L10n.table[status.labelKey])
             if let key = status.explanationKey { XCTAssertNotNil(L10n.table[key]) }
         }

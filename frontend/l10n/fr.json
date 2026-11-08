@@ -161,6 +161,8 @@
   "console.broken": "Ce jeu nécessite votre attention en mode bureau.",
   "console.build.game": "un jeu",
   "console.build.title": "Compilation de %@",
+  "console.building": "Compilation",
+  "console.buildingNote": "Ce jeu est en cours de compilation sur votre Mac. Vous pourrez y jouer ici dès la fin de la compilation.",
   "console.charging": "En charge",
   "console.cheats.noBuild": "Compilez d’abord ce jeu en mode bureau pour activer ou désactiver ses codes.",
   "console.cheats.noFile": "Aucun code pour cette version pour l’instant. Importez-les depuis la page Codes de triche en mode bureau.",

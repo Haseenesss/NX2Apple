@@ -166,6 +166,8 @@
   "console.broken": "このゲームはデスクトップモードで対応が必要です。",
   "console.build.game": "ゲーム",
   "console.build.title": "%@ をビルド中",
+  "console.building": "ビルド中",
+  "console.buildingNote": "このゲームは Mac でビルド中です。ビルドが終わるとここでプレイできます。",
   "console.charging": "充電中",
   "console.cheats.noBuild": "チートを切り替えるには、先にデスクトップでこのゲームをビルドしてください。",
   "console.cheats.noFile": "このバージョンのチートはまだありません。デスクトップのチートページで読み込んでください。",
