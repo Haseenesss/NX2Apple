@@ -66,15 +66,24 @@ package final class RowScroller: ObservableObject {
     /// space on the ScrollView). It scrolls by the least that leaves `margin` beside it, or puts it in the middle (`center`). The
     /// AppKit scroll view is moved directly: SwiftUI's ScrollViewReader did not scroll a horizontal row inside a vertical
     /// ScrollView (console mode's row of games).
-    package func reveal(minX: CGFloat, maxX: CGFloat, margin: CGFloat, center: Bool = false, animated: Bool = true) {
-        guard let view = scrollView else { return }
+    /// Returns where the row is going, nil when it does not move.
+    @discardableResult
+    package func reveal(minX: CGFloat, maxX: CGFloat, margin: CGFloat, center: Bool = false, animated: Bool = true) -> CGFloat? {
+        guard let view = scrollView else { return nil }
         let x = view.contentView.bounds.minX, width = view.contentView.bounds.width
         let target: CGFloat
         if center { target = x + (minX + maxX) / 2 - width / 2 }
         else if minX < margin { target = x + minX - margin }
         else if maxX > width - margin { target = x + maxX - width + margin }
-        else { return }
-        scroll(to: target, animated: animated)
+        else { return nil }
+        return scroll(to: target, animated: animated)
+    }
+
+    /// Whether there is more of the row before and after it once it is at `x`, so what depends on that can start with the scroll
+    /// instead of after it.
+    package func ends(at x: CGFloat) -> (back: Bool, forward: Bool) {
+        guard let view = scrollView, let document = view.documentView else { return (canBack, canForward) }
+        return (x > 1, x < document.frame.width - view.contentView.bounds.width - 1)
     }
 
     /// Scrolls by `distance` (a card's width while a card is dragged to the row's end).
@@ -83,11 +92,12 @@ package final class RowScroller: ObservableObject {
         scroll(to: view.contentView.bounds.minX + distance, animated: animated)
     }
 
-    private func scroll(to x: CGFloat, animated: Bool) {
-        guard let view = scrollView, let document = view.documentView else { return }
+    @discardableResult
+    private func scroll(to x: CGFloat, animated: Bool) -> CGFloat? {
+        guard let view = scrollView, let document = view.documentView else { return nil }
         let clip = view.contentView
         let target = min(max(0, x), max(0, document.frame.width - clip.bounds.width))
-        guard abs(target - clip.bounds.minX) > 0.5 else { return }
+        guard abs(target - clip.bounds.minX) > 0.5 else { return nil }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.25
@@ -98,6 +108,7 @@ package final class RowScroller: ObservableObject {
             clip.setBoundsOrigin(NSPoint(x: target, y: clip.bounds.minY))
         }
         view.reflectScrolledClipView(clip)
+        return target
     }
 }
 

@@ -19,7 +19,10 @@ import NXLauncher
     /// Whether there are more games beyond each end, settled: the scroll view's own flags flip for a moment while the row's layout
     /// changes (RB starts arranging and the row reaches the screen's edges), and the fade followed them and flickered.
     @State private var moreBefore = false
-    @State private var moreAfter = false   // where the row starts in the window, for the mouse (RowDrag)
+    @State private var moreAfter = false
+    /// Until when a scroll this row started is still moving: the scroll view's flags pass through the old values on the way, and
+    /// the settled ones are already set by `reveal`.
+    @State private var scrollingUntil = Date.distantPast   // where the row starts in the window, for the mouse (RowDrag)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var state: ConsoleState { driver.state }
@@ -73,7 +76,7 @@ import NXLauncher
             // to the screen, ending at the page margin, so it stays put when arranging widens the scroll area to the screen's edges.
             .mask(Self.edgeFade(total: size.width, margin: inset - 8, fade: fade, leading: moreBefore, trailing: moreAfter))
             .onReceive(scroller.$canBack.combineLatest(scroller.$canForward).debounce(for: .milliseconds(120), scheduler: RunLoop.main)) { more in
-                guard more.0 != moreBefore || more.1 != moreAfter else { return }
+                guard Date() >= scrollingUntil, more.0 != moreBefore || more.1 != moreAfter else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { moreBefore = more.0; moreAfter = more.1 }
             }
             .onAppear {
@@ -100,8 +103,14 @@ import NXLauncher
 
     /// Scrolls the row so the game's tile is in view (RowScroller.reveal), by where its tile is now.
     private func reveal(_ id: String?, margin: CGFloat, center: Bool, animated: Bool = true) {
-        guard let id, let frame = tileFrames[id] else { return }
-        scroller.reveal(minX: frame.minX, maxX: frame.maxX, margin: margin, center: center, animated: animated && !reduceMotion)
+        guard let id, let frame = tileFrames[id],
+              let target = scroller.reveal(minX: frame.minX, maxX: frame.maxX, margin: margin, center: center, animated: animated && !reduceMotion)
+        else { return }
+        // the fade at each end follows where the row is going, with the scroll, not half a second after it has arrived
+        scrollingUntil = Date().addingTimeInterval(0.4)
+        let ends = scroller.ends(at: target)
+        guard ends.back != moreBefore || ends.forward != moreAfter else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { moreBefore = ends.back; moreAfter = ends.forward }
     }
 
     private func isInside(_ id: String?, margin: CGFloat, rowWidth: CGFloat) -> Bool {
