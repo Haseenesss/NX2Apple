@@ -307,6 +307,8 @@ struct ConsoleSwitchRow: View {
                 ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
                                  isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
             }
+            ConsoleMenuRow(id: "console.settings.saves", scope: scope, symbol: "externaldrive.badge.icloud", title: t(ConsoleCloudSaves.menuKey),
+                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
             ConsoleMenuRow(id: "console.settings.appearance", scope: scope, symbol: "paintpalette", title: t("console.settings.appearance"),
                            note: t("console.settings.appearanceNote"), compact: compact) { driver.openAppearance() }
         }

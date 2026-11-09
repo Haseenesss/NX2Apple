@@ -260,7 +260,7 @@ enum ConsoleInput {
                         .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
                         .offset(x: selected ? edgeNudge : 0)
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
-                        .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
+                        .accessibilityLabel(ConsoleSaveDot.accessibilityLabel(game, lang: lang))
                         .accessibilityHint(t("console.playHint"))
                         .accessibilityAddTraits(selected ? .isSelected : [])
                         // every tile carries its own 8 pt of room for the ring and the focus scale, and the scroll target is this padded
@@ -474,12 +474,11 @@ enum ConsoleInput {
         }
     }
 
-    /// The console's own menu, as the desktop's Settings groups things: Library (the library's switch, the cloud saves), Controllers
-    /// (players, the button mapping, the ways into console mode), Settings (the language, the app's update), and the way back to the desktop.
+    /// The console's own menu, as the desktop's Settings groups things: Controllers (players, the button mapping, the ways into
+    /// console mode), General (the language, the app's update, the cloud saves, Appearance), and the way back to the desktop. The
+    /// library is the home row's last tile, not a menu row.
     private func menu(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            menuRow("console.menu.library", symbol: "square.grid.2x2", title: t("console.menu.library"), note: t("console.menu.libraryNote"),
-                    compact: compact) { driver.openLibrary() }
             menuRow("console.menu.controllers", symbol: "gamecontroller", title: t("console.controllers"), note: t("console.menu.controllersNote"),
                     compact: compact) { driver.openControllers() }
             menuRow("console.menu.settings", symbol: "gearshape", title: t("console.menu.settings"), note: t("console.menu.settingsNote"),
@@ -696,7 +695,7 @@ enum ConsoleInput {
         case .controllers: pad.focused = "console.player.\(state.assigningPlayer ?? 1)"
         case .explanation: pad.focused = "console.explanation.desktop"
         case .homeButtonHint: pad.focused = "console.homeHint.open"
-        case .menu: pad.focused = "console.menu.library"
+        case .menu: pad.focused = "console.menu.controllers"
         case .cloudSaves: pad.focused = ConsoleCloudSaves.sorted(state.saveRows).first.map { "console.saves.row." + $0.id } ?? "console.saves.close"   // the first row as the page sorts them
         case .libraryGrid:
             // the game focused on the home row (the first one from the library tile)

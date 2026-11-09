@@ -69,6 +69,7 @@ import NXLauncher
         }
         if scenario == .starting { snapshot.play("demo.0"); snapshot.starting = .compilingShaders(completed: 18, total: 48) }
         self.init(state: snapshot, lang: lang, animated: animated)
+        loadSaveStates()
         if scenario == .starting, animated { animateStarting("demo.0") }
     }
     func focus(_ gameID: String) { state.focus(gameID) }
@@ -112,7 +113,7 @@ import NXLauncher
             ConsoleCheat(key: "c2", name: t("console.demoCheat2"), kind: .cheat, on: false),
             ConsoleCheat(key: "c3", name: t("console.demoCheat3"), kind: .cheat, on: false)])
         state.games[i].canReset = demoChanged.contains(gameID) || !state.games[i].values.isEmpty
-        state.games[i].save = ConsoleSaveRow(id: gameID, title: state.games[i].title, status: .synced, updated: state.time.addingTimeInterval(-3600), updatedFrom: .cloudSave)
+        state.games[i].save = state.games[i].save ?? ConsoleSaveRow(id: gameID, title: state.games[i].title, status: .synced, updated: state.time.addingTimeInterval(-3600), updatedFrom: .cloudSave)
     }
     func setMod(gameID: String, name: String, on: Bool) {
         guard let i = state.games.firstIndex(where: { $0.id == gameID }), let m = state.games[i].mods.firstIndex(where: { $0.name == name && $0.usable }) else { return }
@@ -178,7 +179,20 @@ import NXLauncher
         showToast(String(format: L10n.string("console.identifyingName", lang), controller.name))
     }
     func openMenu() { state.openMenu() }
-    func openLibrary() { state.openLibrary() }
+    func openLibrary() { state.openLibrary(); loadSaveStates() }
+    /// The preview's cloud saves, one of each dot and one game with them off: in step, waiting to send, none yet, off, in turn.
+    func loadSaveStates() {
+        let statuses: [ConsoleSaveStatus] = [.synced, .pending, .synced, .noSave, .off, .synced, .failed]
+        var n = 0
+        for i in state.games.indices where state.games[i].status == .ready {
+            let status = statuses[n % statuses.count]; n += 1
+            if state.games[i].save?.status != status {
+                state.games[i].save = ConsoleSaveRow(id: state.games[i].id, title: state.games[i].title, status: status,
+                                                     updated: status == .synced ? state.time.addingTimeInterval(-3600 * Double(n)) : nil,
+                                                     updatedFrom: status == .synced ? .cloudSave : nil)
+            }
+        }
+    }
     func pickFromLibrary(_ gameID: String) { state.pickFromLibrary(gameID) }
     func setLibrarySort(_ sort: ConsoleLibrarySort) { state.librarySort = sort }
     func openSettings() { state.openSettings() }

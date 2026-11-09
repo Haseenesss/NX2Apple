@@ -54,6 +54,10 @@ struct ConsoleGameTile: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+            // the cloud save's dot, 12 pt in from the bottom left; at the bottom right where the status capsule takes that corner
+            .overlay(alignment: game.status == .ready ? .bottomLeading : .bottomTrailing) {
+                if let dot = ConsoleSaveDot(game.save?.status) { ConsoleSaveDotView(dot: dot, compact: compact).padding(12) }
+            }
     }
 }
 
@@ -77,5 +81,46 @@ struct ConsoleLibraryTile: View {
                                        startPoint: .topLeading, endPoint: .bottomTrailing))
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(LauncherPalette.cream.opacity(0.25), lineWidth: 1))
+    }
+}
+
+/// A cover's dot for its cloud save (ConsoleGame.save): green in step with the cloud, yellow a save on this Mac the cloud does not
+/// have yet (waiting, failed, not synced, the folder missing), grey no save found. No dot without a save row (not built, or cloud
+/// saves off for the game: nothing is known).
+enum ConsoleSaveDot: Equatable {
+    case synced, localOnly, noSave
+
+    init?(_ status: ConsoleSaveStatus?) {
+        switch status {
+        case .synced?: self = .synced
+        case .pending?, .failed?, .notSynced?, .missingFolder?: self = .localOnly
+        case .noSave?, .notPlayed?: self = .noSave
+        case .off?, nil: return nil
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .synced: return LauncherPalette.ready
+        case .localOnly: return CloudSavesCard.attention
+        case .noSave: return .white.opacity(0.35)
+        }
+    }
+
+    /// The game's name, its status, and its save's state when it has a dot (VoiceOver).
+    static func accessibilityLabel(_ game: ConsoleGame, lang: Lang) -> String {
+        var parts = [game.title, L10n.string(game.status.labelKey, lang)]
+        if let save = game.save, ConsoleSaveDot(save.status) != nil { parts.append(L10n.string(save.status.key, lang)) }
+        return parts.joined(separator: ", ")
+    }
+}
+
+struct ConsoleSaveDotView: View {
+    let dot: ConsoleSaveDot
+    let compact: Bool
+    var body: some View {
+        Circle().fill(dot.color).frame(width: compact ? 8 : 10, height: compact ? 8 : 10)
+            .overlay(Circle().strokeBorder(LauncherPalette.background.opacity(0.85), lineWidth: 1))
+            .accessibilityHidden(true)
     }
 }

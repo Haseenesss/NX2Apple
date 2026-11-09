@@ -2,8 +2,8 @@ import SwiftUI
 import NXCore
 import NXLauncher
 
-/// The library page over the whole screen: the home row's last tile, down on the row and the menu's Library open it. A row of chips
-/// at the top (the order, Only built games, the cloud saves), then every game in a grid of covers: four across on a TV, three in a
+/// The library page over the whole screen: the home row's last tile and down on the row open it. A row of chips at the top (the
+/// order, Only built games), then every game in a grid of covers, each with its cloud save's dot (ConsoleSaveDot): four across on a TV, three in a
 /// Mac window, two in a narrow one. A on a game takes it back to the home screen, first in the row and focused (ConsoleState
 /// .pickFromLibrary); Y opens its options, L and R go a screen back or on, ZL and ZR to the first or last game, B goes back home
 /// with the focus on the library tile. The grid does not go round at its edges.
@@ -71,7 +71,7 @@ import NXLauncher
 
     // MARK: Chips
 
-    /// The order (two chips, the one in use cream), Only built games, and the cloud saves. Narrow: the order on a line of its own.
+    /// The order (two chips, the one in use cream) and Only built games. The cloud saves page is General's (each cover has its dot).
     @ViewBuilder private var chips: some View {
         let order = HStack(spacing: 10) {
             ForEach(ConsoleLibrarySort.allCases, id: \.self) { sort in
@@ -84,10 +84,8 @@ import NXLauncher
                 driver.setPref(.onlyBuilt, on: !built)
             }
             .accessibilityValue(built ? "1" : "0")
-            chip("console.grid.saves", symbol: "icloud", title: t(ConsoleCloudSaves.menuKey), on: false) { driver.openCloudSaves() }
-                .accessibilityHint(t(ConsoleCloudSaves.menuNoteKey))
         }
-        if compact { VStack(alignment: .leading, spacing: 10) { order; rest } }
+        if compact { VStack(alignment: .leading, spacing: 10) { order; rest } }   // narrow: the order on a line of its own
         else { HStack(spacing: 24) { order; rest; Spacer(minLength: 0) } }
     }
 
@@ -141,7 +139,7 @@ import NXLauncher
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
+        .accessibilityLabel(ConsoleSaveDot.accessibilityLabel(game, lang: lang))
         .accessibilityHint(t("console.grid.pick"))
         .id(id)
     }

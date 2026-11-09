@@ -101,7 +101,7 @@ import NXModel
         gamepad.perform(.plus); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "the menu button opens the menu")
         gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "the menu's first row is the library page")
+        XCTAssertEqual(driver.state.presentedSheet, .controllers, "the menu's first row is Controllers (the library is the home row's tile)")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "B goes back to the menu")
         gamepad.perform(.plus); settle()
@@ -626,14 +626,69 @@ import NXModel
         gamepad.perform(.a); settle()
         XCTAssertEqual(driver.state.presentedSheet, .explanation(picked), "A on the home row is the game's own A")
         driver.back(); settle()
-        // the menu's Library opens the same page; picking from it closes the menu too
-        gamepad.perform(.plus); settle()
-        gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.sheets, [.menu, .libraryGrid])
+        // ZL and A from the page again: the grid's first game leads the row now
+        gamepad.perform(.down); settle()
+        XCTAssertEqual(driver.state.sheets, [.libraryGrid])
         gamepad.perform(.zl); settle()
         gamepad.perform(.a); settle()
         XCTAssertTrue(driver.state.sheets.isEmpty)
         XCTAssertEqual(driver.state.homeGames.first?.id, grid.first)
+        // the page's chips are the order and Only built games: right along them ends on Only built games, and A switches it there
+        gamepad.perform(.down); settle()
+        gamepad.perform(.zl); settle()
+        gamepad.perform(.up); settle()
+        for _ in 0..<5 { gamepad.perform(.right); settle() }
+        XCTAssertFalse(driver.state.prefs[.onlyBuilt])
+        gamepad.perform(.a); settle()
+        XCTAssertTrue(driver.state.prefs[.onlyBuilt], "the last chip is Only built games: no cloud saves chip after it")
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid)
+    }
+
+    /// The menu is Controllers, General and Exit; General leads to the cloud saves page and to Appearance, which holds the battery
+    /// style and the home row's game count.
+    @MainActor func testMenuHasThreeRowsAndAppearanceHoldsTheHomeCount() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
+        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)); host.layoutSubtreeIfNeeded() }
+        settle()
+        gamepad.perform(.plus); settle()
+        gamepad.perform(.down); settle()
+        gamepad.perform(.down); settle()
+        gamepad.perform(.down); settle()   // past the last row: stays on Exit
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .confirmExit, "Controllers, General, Exit: the third row is Exit")
+        gamepad.perform(.b); settle()
+        gamepad.perform(.up); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .settings, "the second row is General")
+        driver.openAppearance(); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .appearance)
+        gamepad.perform(.down); settle()   // from the battery style's first segment to the home count's
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.prefs.homeLimit, .six, "Appearance's second row is the home row's game count")
+        gamepad.perform(.down); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .appearance, "nothing under it")
+        XCTAssertEqual(driver.state.prefs.homeLimit, .six)
+    }
+
+    /// A cover's cloud save dot: green in step, yellow a save the cloud does not have yet, grey none found, nothing without a save row.
+    func testSaveDotColours() {
+        let expected: [(ConsoleSaveStatus?, ConsoleSaveDot?)] = [
+            (.synced, .synced), (.pending, .localOnly), (.failed, .localOnly), (.notSynced, .localOnly), (.missingFolder, .localOnly),
+            (.noSave, .noSave), (.notPlayed, .noSave), (.off, nil), (nil, nil)]
+        for (status, dot) in expected { XCTAssertEqual(ConsoleSaveDot(status), dot, "\(String(describing: status))") }
+        XCTAssertEqual(ConsoleSaveDot.synced.color, LauncherPalette.ready)
+        XCTAssertEqual(ConsoleSaveDot.localOnly.color, CloudSavesCard.attention)
+        var game = ConsoleGame(id: "g", title: "Hades", version: "", platforms: [.mac], artwork: nil, status: .ready)
+        XCTAssertEqual(ConsoleSaveDot.accessibilityLabel(game, lang: .en), "Hades, " + L10n.string("console.ready", .en))
+        game.save = ConsoleSaveRow(id: "g", title: "Hades", status: .pending)
+        XCTAssertTrue(ConsoleSaveDot.accessibilityLabel(game, lang: .en).hasSuffix(L10n.string("console.saves.status.pending", .en)))
     }
 
     func testTriggersAndKeyboardPagesMapToTheLibraryInputs() {

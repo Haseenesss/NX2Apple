@@ -481,6 +481,8 @@ struct ConsoleState {
     func openLibrary()
     /// The library page's A on a game, and its order.
     func pickFromLibrary(_ gameID: String)
+    /// Each built game's cloud save (ConsoleGame.save), for the covers' dots: read when the library page opens and when the library changes.
+    func loadSaveStates()
     func setLibrarySort(_ sort: ConsoleLibrarySort)
     func openSettings()
     func openCloudSaves()
@@ -552,6 +554,7 @@ extension ConsoleDriver {
     func openGameMapping(_ gameID: String) {}
     func openLibrary() {}
     func pickFromLibrary(_ gameID: String) {}
+    func loadSaveStates() {}
     func setLibrarySort(_ sort: ConsoleLibrarySort) {}
     func openSettings() {}
     func openCloudSaves() {}
