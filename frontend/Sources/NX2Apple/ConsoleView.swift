@@ -27,12 +27,10 @@ import NXLauncher
     @State private var edgeNudge: CGFloat = 0
     /// The console's size, for how far L and R move in the library page's grid.
     @State private var screenSize: CGSize = .zero
-    /// The library page: its chips have the focus (R3), the game the focus was on before, the last game focused in the grid, and
-    /// the height of its scroll area (how many rows L and R move).
+    /// The library page: its chips have the focus (R3), the game the focus was on before, and the last game focused in the grid.
     @State private var displayMode = false
     @State private var gridFocusBeforeDisplay: String?
     @State private var lastGridFocus: String?
-    @State private var gridViewport: CGFloat = 0
     /// The home row's last tile, the way to the library page.
     static var libraryTileID: String { "console.library.tile" }
 
@@ -133,10 +131,9 @@ import NXLauncher
             gamepad.perform = { [self] action in
                 if let input = ConsoleButtons.input(action, swapAB: driver.state.menuSwapAB) { glyphs = .current(); handle(input, isRepeat: gamepad.isRepeating) } }
             resetFocus() }
-        .onDisappear { gamepad.perform = { _ in }; gamepad.capture = nil; gamepad.repeats = [.left, .right, .up, .down] }
+        .onDisappear { gamepad.perform = { _ in }; gamepad.capture = nil }
         .onChange(of: state.presentedSheet) { sheet in
-            // held L and R keep paging on the library page; its chips give the focus back when anything else opens
-            gamepad.repeats = sheet == .libraryGrid ? [.left, .right, .up, .down, .l, .r] : [.left, .right, .up, .down]
+            // the library page's chips give the focus back when anything else opens
             if sheet != .libraryGrid { displayMode = false; gridFocusBeforeDisplay = nil }
         }
         .onChange(of: pad.focused) { id in
@@ -235,16 +232,16 @@ import NXLauncher
                 HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
                     ForEach(state.homeGames) { game in
                         let selected = state.homeFocusedGame?.id == game.id
-                        Button { driver.focus(game.id); play(game) } label: {
+                        Button { driver.focus(game.id); driver.play(game.id) } label: {
                             ConsoleGameTile(game: game, compact: compact, lang: lang)
                                 .frame(width: width)
                                 .contentShape(RoundedRectangle(cornerRadius: 16))
                         }
                         .buttonStyle(.plain)
-                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { play(game) })
+                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
                         .offset(x: selected ? edgeNudge : 0)
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
-                        .accessibilityLabel(ConsoleSaveDot.accessibilityLabel(game, lang: lang))
+                        .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
                         .accessibilityHint(t("console.playHint"))
                         .accessibilityAddTraits(selected ? .isSelected : [])
                         // every tile carries its own 8 pt of room for the ring and the focus scale, and the scroll target is this padded
@@ -292,15 +289,6 @@ import NXLauncher
         .accessibilityAddTraits(selected ? .isSelected : [])
         .padding(.horizontal, 8)
         .id(Self.rowCell(Self.libraryTileID))
-    }
-
-    /// A on a home tile: the game starts, or a placeholder card (`-consoleDemoGames`) shakes, as it has nothing to start.
-    private func play(_ game: ConsoleGame) {
-        guard game.isPlaceholder else { driver.play(game.id); return }
-        guard !reduceMotion else { return }
-        for (i, x) in [CGFloat(7), -7, 5, -3, 0].enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(i)) { withAnimation(.easeInOut(duration: 0.05)) { edgeNudge = x } }
-        }
     }
 
     /// A held direction stopped at an end of the home row: the focused tile leans 6 pt that way and back (0.12 s). Not with Reduce Motion.
@@ -456,7 +444,7 @@ import NXLauncher
     @ViewBuilder private func fullPage(_ sheet: ConsoleSheet, compact: Bool) -> some View {
         switch sheet {
         case .libraryGrid:
-            ConsoleLibraryGrid(driver: driver, lang: lang, compact: compact, size: screenSize, glyphs: glyphs, displayMode: displayMode, viewport: $gridViewport)
+            ConsoleLibraryGrid(driver: driver, lang: lang, compact: compact, size: screenSize, glyphs: glyphs, displayMode: displayMode)
         case .cloudSaves: ConsoleCloudSavesPage(rows: state.saveRows, lang: lang, compact: compact, close: { driver.back() })
         case let .gamePad(id):
             if let game = state.games.first(where: { $0.id == id }) {
@@ -767,21 +755,10 @@ import NXLauncher
             if case .options = state.presentedSheet { driver.back() }
             else if state.presentedSheet == nil, !state.libraryTileFocused, let id = state.homeFocusedGame?.id { driver.openOptions(id) }
             else if state.presentedSheet == .libraryGrid, let id = ConsoleLibraryGrid<Driver>.gameID(of: pad.focused) { driver.openOptions(id) }
-        case .pageBack, .pageForward, .first, .last:
-            // the library page's grid: a screen back or on, its first or last game; it stops at either end
-            guard state.presentedSheet == .libraryGrid else { return }
-            let ids = state.libraryGames.map(\.id)
-            guard !ids.isEmpty else { return }
-            // from the game focused, or the last one focused in the grid (a filter may have hidden it: then from the first)
-            let current = (ConsoleLibraryGrid<Driver>.gameID(of: pad.focused) ?? ConsoleLibraryGrid<Driver>.gameID(of: lastGridFocus)).flatMap { ids.firstIndex(of: $0) }
-            let page = ConsoleLibraryGrid<Driver>.pageSize(size: screenSize, compact: screenSize.width < 650, viewport: gridViewport)
-            let target: Int = switch input {
-            case .first: 0
-            case .last: ids.count - 1
-            case .pageBack: max((current ?? 0) - page, 0)
-            default: current.map { min($0 + page, ids.count - 1) } ?? 0
-            }
-            pad.focused = ConsoleLibraryGrid<Driver>.gameTarget(ids[target])
+        case .first, .last:
+            // the library page's grid: its first or last game
+            guard state.presentedSheet == .libraryGrid, let id = input == .first ? state.libraryGames.first?.id : state.libraryGames.last?.id else { return }
+            pad.focused = ConsoleLibraryGrid<Driver>.gameTarget(id)
         case .displayMode: if state.presentedSheet == .libraryGrid { toggleDisplayMode() }
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
         case .back: break

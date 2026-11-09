@@ -161,24 +161,10 @@ struct ConsolePadSnapshot: Equatable {
         let saves = Dictionary(state.games.compactMap { g in g.save.map { (g.id, $0) } }) { a, _ in a }   // the covers' dots, until read again
         let shown = LibraryFilter.load() == .built ? library.games.filter(LibraryFilter.built.includes) : library.games   // the desktop's filter
         let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); g.save = g.status == .ready ? saves[g.id] : nil; return g })
-        state.games = games + Self.placeholders(UserDefaults.standard.integer(forKey: Self.placeholderKey), t: t)
+        state.games = games
         state.focusedGameID = games.contains { $0.id == focus } ? focus : (library.selected.map { $0.id.uuidString }.flatMap { id in games.contains { $0.id == id } ? id : nil } ?? games.first?.id)
         state.time = Date(); loadHero(); loadSaveStates()
         reloadOpenDetails()   // the open options page keeps its mods, cheats, save and Reset
-    }
-
-    /// For trying the home row and the library page with many games on a real Mac: `-consoleDemoGames 10` as a launch argument
-    /// adds that many cards after the library's, "Test game 1…N", with covers drawn from their titles, built, not built and needing
-    /// data in turn. They are not in library.json and nothing starts them (A on the home row shakes the card).
-    static let placeholderKey = "consoleDemoGames"
-    static func placeholders(_ count: Int, t: (String) -> String) -> [ConsoleGame] {
-        let statuses: [ConsoleGame.Status] = [.ready, .needsBuild, .ready, .needsData]
-        return (0..<min(max(count, 0), 200)).map { i in
-            var game = ConsoleGame(id: "placeholder.\(i + 1)", title: String(format: t("console.demoGame"), i + 1), version: "", platforms: [.mac],
-                                   artwork: nil, status: statuses[i % statuses.count])
-            game.isPlaceholder = true
-            return game
-        }
     }
 
     static func status(of game: LibraryGame, brokenMessage: String) -> ConsoleGame.Status {

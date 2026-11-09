@@ -22,8 +22,6 @@ final class LauncherGamepad: ObservableObject {
     /// True while `perform` runs for a held direction's repeat rather than for a new press: console mode's home row stops at its
     /// ends on a repeat and goes round on a new press. Tests set it around a `perform` to act as a held button.
     var isRepeating = false
-    /// The buttons that repeat while held: the directions, and L and R where the console's library page pages with them.
-    var repeats: Set<Action> = [.left, .right, .up, .down]
     /// Sees every press with the controller it came from before it navigates. Returning true consumes it (the Controllers sheet uses
     /// this to give the next press to the player being assigned).
     var capture: ((String, Action) -> Bool)?
@@ -184,7 +182,7 @@ final class LauncherGamepad: ObservableObject {
                 DispatchQueue.main.async {
                     if NSApp.isActive, let capture = self.capture, capture(subID, action) { return }
                     self.fire(action)
-                    if self.repeats.contains(action) { self.startRepeat(action) }
+                    if [.left, .right, .up, .down].contains(action) { self.startRepeat(action) }
                 }
             }
             for action in released { DispatchQueue.main.async { if self.repeating == action { self.stopRepeat() } } }

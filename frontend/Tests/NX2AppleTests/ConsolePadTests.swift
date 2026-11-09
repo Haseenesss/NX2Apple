@@ -71,7 +71,7 @@ import NXModel
     func testGamepadActionsMapToConsoleInputs() {
         let expected: [(LauncherGamepad.Action, ConsoleInput?)] = [
             (.left, .left), (.right, .right), (.up, .up), (.down, .down), (.a, .activate), (.b, .back),
-            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, .pageBack), (.r, .pageForward), (.zl, .first), (.zr, .last), (.rs, .displayMode)]
+            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, nil), (.zl, .first), (.zr, .last), (.rs, .displayMode)]
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
     }
 
@@ -603,16 +603,19 @@ import NXModel
         gamepad.perform(.right); settle()
         gamepad.perform(.down); settle()
         XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "down on the row opens the library page")
-        // ZR to the last game of the grid, L back a screen and R on again, then A puts it first on the home row
+        // ZR to the last game of the grid, ZL to the first and ZR back (L and R do nothing there), then A puts it first on the home row
         let grid = driver.state.libraryGames.map(\.id)
         let picked = try XCTUnwrap(grid.last)
         XCTAssertFalse(driver.state.homeGames.contains { $0.id == picked }, "a game the row does not show")
         let played = driver.state.games.first { $0.id == picked }?.lastPlayed
         gamepad.perform(.zr); settle()
         gamepad.perform(.l); settle()
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(picked), "L does not page")
+        gamepad.perform(.b); settle()
         gamepad.perform(.zl); settle()
-        gamepad.perform(.l); settle()   // at the first game: stays there
         gamepad.perform(.zr); settle()
+        gamepad.perform(.r); settle()
         gamepad.perform(.y); settle()
         XCTAssertEqual(driver.state.presentedSheet, .options(picked), "Y opens the focused game's options over the page")
         gamepad.perform(.b); settle()
@@ -665,66 +668,6 @@ import NXModel
         gamepad.perform(.rs); settle()
         gamepad.perform(.y); settle()
         XCTAssertEqual(driver.state.presentedSheet, .options(grid[1]), "R3 again gives it back too")
-    }
-
-    /// L and R page the grid by its rows on screen: on to the last game, where R again stays, and back to the first, where L again
-    /// stays; held, they go on. A filter that hides the focused game pages from the first.
-    @MainActor func testLibraryPagingReachesBothEndsAndComesBack() throws {
-        let driver = MockConsoleDriver(scenario: .full, animated: false)
-        driver.state.games += LiveConsoleDriver.placeholders(20) { L10n.string($0, .en) }
-        let gamepad = LauncherGamepad()
-        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
-        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
-        window.contentView = host
-        window.orderBack(nil)
-        defer { window.orderOut(nil); window.contentView = nil; window.close() }
-        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)); host.layoutSubtreeIfNeeded() }
-        settle()
-        driver.openLibrary(); settle()
-        let ids = driver.state.libraryGames.map(\.id)
-        XCTAssertEqual(ids.count, 32)
-        func focused() -> Int? {
-            gamepad.perform(.y); settle()
-            defer { gamepad.perform(.b); settle() }
-            if case let .options(id)? = driver.state.presentedSheet { return ids.firstIndex(of: id) }
-            return nil
-        }
-        XCTAssertEqual(gamepad.repeats, [.left, .right, .up, .down, .l, .r], "held L and R repeat on the library page")
-        var seen: [Int] = []
-        for _ in 0..<20 { gamepad.perform(.r); settle(); seen.append(try XCTUnwrap(focused())) }
-        XCTAssertEqual(seen.last, ids.count - 1, "R reaches the last game")
-        XCTAssertEqual(seen, seen.sorted(), "and only goes on")
-        let step = seen[0]
-        XCTAssertGreaterThan(step, 0)
-        XCTAssertEqual(step % 3, 0, "a page is whole rows of three")
-        gamepad.perform(.r); settle()
-        XCTAssertEqual(focused(), ids.count - 1, "R at the end stays there")
-        gamepad.perform(.l); settle()
-        XCTAssertEqual(focused(), ids.count - 1 - step, "L goes back a page")
-        gamepad.isRepeating = true; for _ in 0..<20 { gamepad.perform(.l) }; gamepad.isRepeating = false; settle()
-        XCTAssertEqual(focused(), 0, "held L reaches the first game")
-        gamepad.perform(.r); settle()
-        XCTAssertEqual(focused(), step, "and R goes on again")
-        driver.back(); settle()
-        XCTAssertEqual(gamepad.repeats, [.left, .right, .up, .down], "only there")
-    }
-
-    /// `-consoleDemoGames N`: N cards after the library's, built, not built and needing data in turn; A never starts one.
-    @MainActor func testPlaceholderCardsNeverStart() throws {
-        let cards = LiveConsoleDriver.placeholders(10) { L10n.string($0, .zh) }
-        XCTAssertEqual(cards.count, 10)
-        XCTAssertEqual(cards.first?.title, "测试游戏 1")
-        XCTAssertEqual(cards.map(\.status).prefix(4), [.ready, .needsBuild, .ready, .needsData])
-        XCTAssertTrue(cards.allSatisfy(\.isPlaceholder))
-        XCTAssertTrue(LiveConsoleDriver.placeholders(-3) { $0 }.isEmpty)
-        let driver = MockConsoleDriver(scenario: .full, animated: false)
-        driver.state.games += cards
-        driver.play(cards[0].id)
-        XCTAssertNil(driver.state.startingGameID, "a built placeholder does not start")
-        driver.play(cards[1].id)
-        XCTAssertNil(driver.state.presentedSheet, "nor explains a build it has not got")
-        driver.openLibrary(); driver.pickFromLibrary(cards[2].id)
-        XCTAssertEqual(driver.state.homeGames.first?.id, cards[2].id, "it can still be picked onto the home row")
     }
 
     /// The menu is Controllers, General and Exit; General leads to the cloud saves page and to Appearance, which holds the battery

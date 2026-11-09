@@ -30,8 +30,6 @@ struct ConsoleKeyboardInput: NSViewRepresentable {
             case 126: return .up
             case 36, 76, 49: return .activate
             case 53: return .back
-            case 116: return .pageBack      // Page Up
-            case 121: return .pageForward   // Page Down
             case 115: return .first         // Home
             case 119: return .last          // End
             default:

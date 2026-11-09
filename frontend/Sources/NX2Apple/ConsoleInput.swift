@@ -3,8 +3,8 @@ import Foundation
 /// Semantic inputs from a future controller adapter; the view does not discover hardware.
 enum ConsoleInput {
     case left, right, up, down, activate, back, options, menu
-    /// The library page's: a screen back or on (L, R), its first or last game (ZL, ZR). Nothing elsewhere.
-    case pageBack, pageForward, first, last
+    /// The library page's: its first or last game (ZL, ZR). Nothing elsewhere.
+    case first, last
     /// The library page's display chips (its order, Only built games) take the focus, or give it back to the grid: R3, or F.
     case displayMode
 
@@ -21,12 +21,10 @@ enum ConsoleInput {
         case .b: self = .back
         case .y: self = .options
         case .plus, .select: self = .menu
-        case .l: self = .pageBack
-        case .r: self = .pageForward
         case .zl: self = .first
         case .zr: self = .last
         case .rs: self = .displayMode
-        case .x: return nil
+        case .x, .l, .r: return nil
         }
     }
 }

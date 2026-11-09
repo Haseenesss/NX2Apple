@@ -42,6 +42,8 @@ struct ConsoleGameTile: View {
     let game: ConsoleGame
     let compact: Bool
     let lang: Lang
+    /// The cloud save's dot (ConsoleSaveDot): on the library page, not on the home row.
+    var showsSaveDot = false
     var body: some View {
         ConsoleArtwork(image: game.artwork, title: game.title, focus: game.artworkFocus).aspectRatio(1.8, contentMode: .fit)
             .opacity(game.status == .ready ? 1 : 0.45)   // not playable on this Mac: dimmed, its status on top
@@ -56,7 +58,7 @@ struct ConsoleGameTile: View {
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.12), lineWidth: 1))
             // the cloud save's dot, 12 pt in from the bottom left; at the bottom right where the status capsule takes that corner
             .overlay(alignment: game.status == .ready ? .bottomLeading : .bottomTrailing) {
-                if let dot = ConsoleSaveDot(game.save?.status) { ConsoleSaveDotView(dot: dot, compact: compact).padding(12) }
+                if showsSaveDot, let dot = ConsoleSaveDot(game.save?.status) { ConsoleSaveDotView(dot: dot, compact: compact).padding(12) }
             }
     }
 }

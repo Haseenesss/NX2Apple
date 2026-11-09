@@ -41,8 +41,6 @@ enum ConsoleButtons {
         case .right: return .right
         case .up: return .up
         case .down: return .down
-        case .l: return .pageBack
-        case .r: return .pageForward
         case .zl: return .first
         case .zr: return .last
         case .rs: return .displayMode

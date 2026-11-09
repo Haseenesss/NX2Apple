@@ -54,9 +54,6 @@ struct ConsoleGame: Identifiable {
     var save: ConsoleSaveRow?
     /// When it was last started from the launcher, the desktop or console mode (LibraryGame.lastPlayed); nil for never.
     var lastPlayed: Date?
-    /// A card for trying the home row and the library page with many games (`-consoleDemoGames N`, LiveConsoleDriver): no library
-    /// game behind it, so it never starts.
-    var isPlaceholder = false
 
     /// The console's order: the games this Mac can play first, then the rest, each group in the order it came in.
     static func readyFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
@@ -345,7 +342,7 @@ struct ConsoleState {
         if frontGameID != nil { frontGameID = nil }
     }
     mutating func play(_ id: String) {
-        guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }), !game.isPlaceholder else { return }
+        guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
         if game.status == .ready { startingGameID = id; starting = .preparing; sheets = []; libraryTileFocused = false }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }

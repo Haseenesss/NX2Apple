@@ -5,9 +5,8 @@ import NXLauncher
 /// The library page over the whole screen: the home row's last tile and down on the row open it. The title and its count at the
 /// top, the display chips (the order, Only built games) at their right, then every game in a grid of covers, each with its cloud
 /// save's dot (ConsoleSaveDot): four across on a TV, three in a Mac window, two in a narrow one. The focus stays in the grid: A on a
-/// game takes it back to the home screen, first in the row and focused (ConsoleState.pickFromLibrary); Y opens its options, L and R
-/// go a screen back or on (held, they go on), ZL and ZR to the first or last game, B goes back home with the focus on the library
-/// tile. The grid does not go round at its edges. R3 (or F) moves the focus to the chips (`displayMode`): left and right between
+/// game takes it back to the home screen, first in the row and focused (ConsoleState.pickFromLibrary); Y opens its options, ZL and
+/// ZR go to the first or last game, B goes back home with the focus on the library tile. The grid does not go round at its edges. R3 (or F) moves the focus to the chips (`displayMode`): left and right between
 /// them, A picks, B or R3 gives the focus back to the game it was on.
 @MainActor struct ConsoleLibraryGrid<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver
@@ -17,8 +16,6 @@ import NXLauncher
     let glyphs: ConsoleGlyphs
     /// The chips have the focus: the grid takes no direction.
     var displayMode = false
-    /// The height the grid's scroll area has, measured, for how many rows L and R move.
-    var viewport: Binding<CGFloat> = .constant(0)
     @EnvironmentObject private var pad: PadFocus
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -40,16 +37,6 @@ import NXLauncher
     /// Four across on a screen as wide as a TV's, two in a narrow window, three otherwise.
     static func columns(width: CGFloat, compact: Bool) -> Int { compact ? 2 : width >= 1600 ? 4 : 3 }
     static func spacing(compact: Bool) -> CGFloat { compact ? 16 : 28 }
-    /// How many games a screen of the grid shows, in whole rows (at least one), which L and R move by: the rows that fit the
-    /// measured scroll area (`viewport`), or an estimate from the window's size before it is measured.
-    static func pageSize(size: CGSize, compact: Bool, viewport: CGFloat = 0) -> Int {
-        let columns = columns(width: size.width, compact: compact)
-        let inset: CGFloat = compact ? 24 : 64, spacing = spacing(compact: compact)
-        let tileWidth = (size.width - 2 * inset - CGFloat(columns - 1) * spacing) / CGFloat(columns)
-        let rowHeight = tileWidth / 1.8 + (compact ? 34 : 44) + spacing   // the cover, its name, the gap
-        let gridHeight = viewport > 0 ? viewport : size.height - (compact ? 220 : 270)   // the title row and the hints
-        return columns * max(1, Int(gridHeight / max(rowHeight, 1)))
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -64,7 +51,6 @@ import NXLauncher
                     }
                 }
                 .consoleScrollFade()
-                .background(GeometryReader { g in Color.clear.onAppear { viewport.wrappedValue = g.size.height }.onChange(of: g.size.height) { viewport.wrappedValue = $0 } })
                 .opacity(displayMode ? 0.55 : 1)
                 .onChange(of: pad.focused) { id in
                     guard let id, Self.gameID(of: id) != nil else { return }
@@ -165,7 +151,7 @@ import NXLauncher
         let pick = { driver.pickFromLibrary(game.id) }
         return VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             Button(action: pick) {
-                ConsoleGameTile(game: game, compact: compact, lang: lang).contentShape(RoundedRectangle(cornerRadius: 16))
+                ConsoleGameTile(game: game, compact: compact, lang: lang, showsSaveDot: true).contentShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
             .padTarget(id, scope: scope, radius: 16, when: !displayMode, activate: pick)   // not while the chips have the focus
@@ -193,7 +179,6 @@ import NXLauncher
             } else {
                 hint([a], "console.grid.pick")
                 hint([glyphs.glyph(for: .options, on: ConsoleButtons.button(for: .options, swapAB: swap))], "console.options")
-                hint([glyphs.shoulder("L"), glyphs.shoulder("R")], "console.grid.page")
                 if !compact { hint([glyphs.shoulder("ZL"), glyphs.shoulder("ZR")], "console.grid.ends") }
                 hint([glyphs.rightStickPress], "console.grid.display")
                 hint([b], "console.close")
