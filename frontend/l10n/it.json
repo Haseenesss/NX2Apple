@@ -177,6 +177,8 @@
   "console.broken": "Questo gioco richiede attenzione in modalità desktop.",
   "console.build.game": "un gioco",
   "console.build.title": "Compilazione di %@",
+  "console.building": "Compilazione",
+  "console.buildingNote": "Questo gioco è in compilazione sul Mac. Potrai giocarci qui appena la compilazione sarà finita.",
   "console.charging": "In carica",
   "console.cheats.noBuild": "Compila prima questo gioco in modalità desktop per attivare o disattivare i suoi trucchi.",
   "console.cheats.noFile": "Ancora nessun trucco per questa versione. Importali dalla pagina Trucchi in modalità desktop.",

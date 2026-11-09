@@ -38,6 +38,8 @@ extension LiveConsoleDriver {
         if prefs != state.prefs { state.prefs = prefs }
         let build = builds.flatMap { Self.build($0, library: library, t: t) }
         if build != state.build { state.build = build }
+        // A build started or ended: the row greys its game, or brings it to colour (or drops it under Built, when it failed)
+        if state.games.first(where: \.building)?.id != buildingGameID?.uuidString { queueRefresh() }
         if state.homeButtonAvailable != isMacOS27 { state.homeButtonAvailable = isMacOS27 }
     }
 
@@ -57,7 +59,7 @@ extension LiveConsoleDriver {
         guard b.running else { return nil }
         let stage = b.stages.last { $0.state == .running }
         let title = b.gameTitleID.flatMap { tid in library.games.first { $0.titleID == tid }?.name } ?? ""
-        return ConsoleBuild(title: title, stage: stage.map { Stage.localizedName($0.name, t) } ?? "", fraction: stage?.percent.map { $0 / 100 })
+        return ConsoleBuild(title: title, stage: stage.map { Stage.localizedName($0.name, t) } ?? "", fraction: b.stageFraction)
     }
 
     // MARK: A game's options

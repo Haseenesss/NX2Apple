@@ -420,9 +420,20 @@ final class GameLibrary: ObservableObject {
         return game.id
     }
 
-    @MainActor @discardableResult func rememberInputs(_ model: BuildStore) -> UUID? {
+    /// The library's key for the game a build makes: its title ID, or the base package's path while that is unknown.
+    @MainActor static func buildKey(_ model: BuildStore) -> String? {
         guard !model.basePath.isEmpty else { return nil }
-        let titleID = model.gameTitleID ?? URL(fileURLWithPath: model.basePath).standardizedFileURL.path
+        return model.gameTitleID ?? URL(fileURLWithPath: model.basePath).standardizedFileURL.path
+    }
+
+    /// The entry of the game being built now (the one rememberInputs made or found when the build started), nil with no build.
+    @MainActor func buildingID(_ model: BuildStore) -> UUID? {
+        guard model.running, let key = Self.buildKey(model) else { return nil }
+        return games.first { $0.titleID == key }?.id
+    }
+
+    @MainActor @discardableResult func rememberInputs(_ model: BuildStore) -> UUID? {
+        guard let titleID = Self.buildKey(model) else { return nil }
         var game = games.first { $0.titleID == titleID } ?? LibraryGame(titleID: titleID, name: Self.title(for: model.gameFolder?.folder ?? model.basePath, repo: model.repo.path, titleID: titleID))
         game.inputs = Dictionary(uniqueKeysWithValues: model.slots.map { ($0.id, $0.paths) })
         // A game folder is kept as the folder: Build again reads it anew (LauncherView.configureBuild).

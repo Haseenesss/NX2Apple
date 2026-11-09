@@ -165,8 +165,8 @@ import NXModel
         let built = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp(titleID).path)
         let unbuilt = LibraryGame(titleID: "0100000000010000", name: "Celeste")
         let games = [unbuilt, built]
-        XCTAssertEqual(games.filter(LibraryFilter.owned.includes).map(\.id), [unbuilt.id, built.id])
-        XCTAssertEqual(games.filter(LibraryFilter.built.includes).map(\.id), [built.id])
+        XCTAssertEqual(games.filter { LibraryFilter.owned.includes($0) }.map(\.id), [unbuilt.id, built.id])
+        XCTAssertEqual(games.filter { LibraryFilter.built.includes($0) }.map(\.id), [built.id])
 
         let hidden = LibraryFilter.built.reconcile(games: games, selectedID: unbuilt.id, focused: "card." + unbuilt.id.uuidString)
         XCTAssertEqual(hidden.selectedID, built.id)
@@ -182,6 +182,38 @@ import NXModel
         let none = LibraryFilter.built.reconcile(games: [unbuilt], selectedID: unbuilt.id, focused: nil)
         XCTAssertNil(none.selectedID)
         XCTAssertEqual(LibraryFilter.owned.reconcile(games: games, selectedID: nil, focused: nil).selectedID, unbuilt.id)
+    }
+
+    /// The game being built shows under Built from the start of its build (#937): its card is there, grey, before it has a build,
+    /// and the selection and the focus on it stay. Once the build is over without a build, Built hides it again.
+    func testBuiltFilterShowsTheGameBeingBuilt() throws {
+        let built = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp(titleID).path)
+        let unbuilt = LibraryGame(titleID: "0100000000010000", name: "Celeste")
+        let games = [unbuilt, built]
+        XCTAssertTrue(LibraryFilter.built.includes(unbuilt, building: unbuilt.id))
+        XCTAssertFalse(LibraryFilter.built.includes(unbuilt, building: built.id))
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games, order: .name, building: unbuilt.id).map(\.id), [unbuilt.id, built.id])
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games, matching: "hades", building: unbuilt.id).map(\.id), [built.id], "the search still applies")
+
+        let kept = LibraryFilter.built.reconcile(games: games, selectedID: unbuilt.id, focused: "card." + unbuilt.id.uuidString, building: unbuilt.id)
+        XCTAssertEqual(kept.selectedID, unbuilt.id)
+        XCTAssertEqual(kept.focused, "card." + unbuilt.id.uuidString)
+
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games).map(\.id), [built.id])
+    }
+
+    /// The entry the console row and the filter call "being built" is the one rememberInputs made when the build started.
+    func testBuildingIDIsTheEntryTheBuildStarted() {
+        let stores = LauncherStores(defaults: testDefaults); let model = stores.build
+        let library = GameLibrary(file: temporary.appendingPathComponent("building.json"))
+        XCTAssertNil(GameLibrary.buildKey(model), "no base package chosen")
+        model.slots[0].paths = ["/games/Celeste [0100000000010000].nsp"]
+        let id = library.rememberInputs(model)
+        XCTAssertNotNil(id)
+        XCTAssertNil(library.buildingID(model), "no build running")
+        model.running = true
+        defer { model.running = false }
+        XCTAssertEqual(library.buildingID(model), id)
     }
 
     func testReadyRequiresMatchingGameAndCompleteExecutables() throws {

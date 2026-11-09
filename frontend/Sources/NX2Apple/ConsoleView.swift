@@ -723,19 +723,27 @@ struct ConsoleButtonWidths: PreferenceKey {
     static func reader(_ id: String) -> some View { GeometryReader { g in Color.clear.preference(key: ConsoleButtonWidths.self, value: [id: g.size.width]) } }
 }
 
-/// A game's cover alone: the focused game's name is the big title above the row, so no tile carries a caption.
+/// A game's cover alone: the focused game's name is the big title above the row, so no tile carries a caption. A game this Mac
+/// cannot play is grey with its status on top; the game being built carries the build chip's progress (the same figure) and comes to
+/// colour when its build is done (CoverLook).
 struct ConsoleGameTile: View {
     let game: ConsoleGame
+    /// The desktop's build, when it is this game's.
+    var build: ConsoleBuild? = nil
     let compact: Bool
     let lang: Lang
     var body: some View {
         ConsoleArtwork(image: game.artwork, title: game.title, focus: game.artworkFocus).aspectRatio(1.8, contentMode: .fit)
-            .opacity(game.status == .ready ? 1 : 0.45)   // not playable on this Mac: dimmed, its status on top
+            .coverLook(CoverLook(built: game.status == .ready, building: game.building, fraction: build?.fraction),
+                       label: L10n.string("console.building", lang),
+                       percent: build?.fraction.map { "\(Int(($0 * 100).rounded()))%" },   // as the chip writes it
+                       tint: LauncherPalette.cream, scale: compact ? 1.2 : 1.5)
             .overlay(alignment: .bottomLeading) {
-                if game.status != .ready {
+                if game.status != .ready && !game.building {
                     Text(L10n.string(game.status.labelKey, lang)).font(.manrope(compact ? 14 : 18, .semibold))
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(LauncherPalette.background.opacity(0.93), in: Capsule()).padding(14)
+                        .transition(.opacity)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 16))

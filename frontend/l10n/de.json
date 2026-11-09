@@ -178,6 +178,8 @@
   "console.broken": "Dieses Spiel braucht im Desktop-Modus Aufmerksamkeit.",
   "console.build.game": "ein Spiel",
   "console.build.title": "%@ wird erstellt",
+  "console.building": "Wird gebaut",
+  "console.buildingNote": "Dieses Spiel wird gerade auf deinem Mac gebaut. Sobald der Build fertig ist, kannst du es hier spielen.",
   "console.charging": "Lädt",
   "console.cheats.noBuild": "Erstelle dieses Spiel zuerst am Desktop, um seine Cheats zu schalten.",
   "console.cheats.noFile": "Für diese Version gibt es noch keine Cheats. Importiere sie am Desktop auf der Seite Cheats.",

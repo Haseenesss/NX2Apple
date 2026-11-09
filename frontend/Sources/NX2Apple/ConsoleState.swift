@@ -7,10 +7,12 @@ import NXLauncher
 /// controller names and a clock value; none of these types inspects a library or a controller device.
 struct ConsoleGame: Identifiable {
     enum Status: Equatable {
-        case ready, needsBuild, needsData, iphoneOnly, broken(String)
+        /// `building`: not playable on this Mac yet, and its build is running on the desktop (its tile greys and shows the progress).
+        case ready, building, needsBuild, needsData, iphoneOnly, broken(String)
         var labelKey: String {
             switch self {
             case .ready: return "console.ready"
+            case .building: return "console.building"
             case .needsBuild: return "console.notBuilt"
             case .needsData: return "console.needsDataBadge"
             case .iphoneOnly: return "console.iphoneOnly"
@@ -20,6 +22,7 @@ struct ConsoleGame: Identifiable {
         var explanationKey: String? {
             switch self {
             case .ready: return nil
+            case .building: return "console.buildingNote"
             case .needsBuild: return "console.needsBuild"
             case .needsData: return "console.needsData"
             case .iphoneOnly: return "console.iphoneOnlyNote"
@@ -41,6 +44,9 @@ struct ConsoleGame: Identifiable {
     /// The part of the cover the card keeps when it crops it (the thumbnail's focus point).
     var artworkFocus = UnitPoint.center
     var status: Status
+    /// This game's build is running on the desktop: also for a game that is ready and being built again (its tile stays in colour
+    /// and shows the progress). The progress itself is the build chip's (ConsoleState.build), read live.
+    var building = false
     /// The exact launcher's model, already decoded and localized by the driver.
     var settings: [LaunchSetting] = []
     var values: [String: String] = [:]
@@ -314,6 +320,7 @@ struct ConsoleState {
     }
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
+        if game.building { return }   // its app is being written: the tile shakes instead (ConsoleGameRow)
         if game.status == .ready { startingGameID = id; starting = .preparing; sheets = [] }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }

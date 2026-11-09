@@ -20,6 +20,9 @@ import NXLauncher
     /// changes (RB starts arranging and the row reaches the screen's edges), and the fade followed them and flickered.
     @State private var moreBefore = false
     @State private var moreAfter = false
+    /// The tile of a game being built, shaking after a click or A: not yet.
+    @State private var shakingID: String?
+    @State private var shakeOffset: CGFloat = 0
     /// Until when a scroll this row started is still moving: the scroll view's flags pass through the old values on the way, and
     /// the settled ones are already set by `reveal`.
     @State private var scrollingUntil = Date.distantPast   // where the row starts in the window, for the mouse (RowDrag)
@@ -131,14 +134,14 @@ import NXLauncher
         // a game cut at the row's edge is drawn smaller and fainter: there are more games that way, only not in view (the page
         // margin counts as out of view, as it is masked while not arranging)
         let shown = held || dragged ? 1 : Self.shownFraction(tileFrames[game.id], rowWidth: rowWidth, margin: inset - 8)
-        return ConsoleGameTile(game: game, compact: compact, lang: lang)
+        return ConsoleGameTile(game: game, build: game.building ? state.build : nil, compact: compact, lang: lang)
             .frame(width: width)
             .contentShape(RoundedRectangle(cornerRadius: 16))
             // a click plays (or picks up and puts down while arranging, as A does); a long press picks the game up and the mouse drags it
             .rowCardGestures(id: game.id, drag: drag, tap: {
                 driver.focus(game.id)   // brings a game cut at the edge into view
                 guard shown > 0.98 else { return }   // a click on a game cut at the edge only scrolls to it
-                if driver.state.arranging { driver.toggleHold() } else { driver.play(game.id) }
+                if driver.state.arranging { driver.toggleHold() } else if game.building { shake(game.id) } else { driver.play(game.id) }
             }, pick: {
                 driver.pickUp(game.id)
                 guard driver.state.heldGameID == game.id else { return }
@@ -148,7 +151,8 @@ import NXLauncher
             })
             .scaleEffect(drag.pressing == game.id && !held ? 1.03 : 1)   // pressed: it starts to lift before it is picked up
             .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: drag.pressing)
-            .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
+            .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { if game.building { shake(game.id) } else { driver.play(game.id) } })
+            .offset(x: shakingID == game.id ? shakeOffset : 0)
             .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
                          canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: scale,
                          dragX: dragged ? drag.offset(for: game.id) : 0)
@@ -171,6 +175,14 @@ import NXLauncher
 
     /// The dragged game takes one step toward the pointer when it has passed the next game, within its group (the state refuses to
     /// cross). Each step is kept at once, as a step of the controller's is; the new places come back as frames and call this again.
+    /// A game still being built cannot start: its tile shakes, 6 pt side to side, four times (0.28 s). Not with Reduce Motion.
+    private func shake(_ id: String) {
+        guard !reduceMotion else { return }
+        shakingID = id
+        withAnimation(.easeInOut(duration: 0.07).repeatCount(4, autoreverses: true)) { shakeOffset = 6 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { withAnimation(.easeOut(duration: 0.05)) { shakeOffset = 0 }; shakingID = nil }
+    }
+
     private func follow(order: [String], frames: [String: CGRect]) {
         guard drag.active else { return }
         let step = drag.step(order: order, frames: frames)

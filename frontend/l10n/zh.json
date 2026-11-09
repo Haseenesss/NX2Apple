@@ -177,6 +177,8 @@
   "console.broken": "此游戏需要在桌面模式中处理。",
   "console.build.game": "游戏",
   "console.build.title": "正在构建 %@",
+  "console.building": "正在构建",
+  "console.buildingNote": "这个游戏正在 Mac 上构建，构建完成后就能在这里开始游戏。",
   "console.charging": "正在充电",
   "console.cheats.noBuild": "先在桌面上构建这个游戏，才能开关金手指。",
   "console.cheats.noFile": "这个版本还没有金手指。请在桌面的金手指页导入。",

@@ -168,6 +168,8 @@
   "console.batteryUnknown": "Batteri rapporteras inte",
   "console.build.game": "ett spel",
   "console.build.title": "Bygger %@",
+  "console.building": "Bygger",
+  "console.buildingNote": "Spelet byggs på din Mac. Du kan spela det här så snart bygget är klart.",
   "console.cheats.noBuild": "Bygg först spelet i skrivbordsläget för att slå på eller av dess fusk.",
   "console.cheats.noFile": "Inget fusk för den här versionen än. Importera det på sidan Fusk i skrivbordsläget.",
   "console.demoCheat1": "Oändlig hälsa",

@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import NXModel
 @testable import NX2Apple
 @testable import NXCore
 @testable import NXLauncher
@@ -68,6 +69,51 @@ import SwiftUI
         chosen.inputs = ["keys": ["/k"]]
         XCTAssertEqual(LiveConsoleDriver.status(of: chosen, brokenMessage: "x"), .needsBuild)
         XCTAssertEqual(LiveConsoleDriver.platforms(of: broken), [.mac])
+    }
+
+    /// A game the desktop is building is "Building" until it is ready; a game being built again stays playable meanwhile.
+    func testBuildingStatus() throws {
+        var chosen = LibraryGame(titleID: titleID, name: "C")
+        chosen.inputs = ["base": ["/b.nsp"]]
+        XCTAssertEqual(LiveConsoleDriver.status(of: chosen, brokenMessage: "x", building: true), .building)
+        XCTAssertEqual(LiveConsoleDriver.status(of: LibraryGame(titleID: titleID, name: "D"), brokenMessage: "x", building: true), .building)
+        let ready = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp().path)
+        XCTAssertEqual(LiveConsoleDriver.status(of: ready, brokenMessage: "x", building: true), .ready)
+        XCTAssertEqual(ConsoleGame.Status.building.labelKey, "console.building")
+        XCTAssertEqual(ConsoleGame.Status.building.explanationKey, "console.buildingNote")
+    }
+
+    /// Under "only built" the row shows the game being built (grey, its tile carries the build chip's progress), and drops it when the
+    /// build ends without a build. A ready game being built again keeps its status and gets the progress too.
+    func testTheGameBeingBuiltShowsInTheRow() throws {
+        let (driver, library, _) = try makeDriver()
+        LibraryFilter.built.save()
+        defer { UserDefaults.standard.removeObject(forKey: "libraryFilter") }
+        let stores = LauncherStores(defaults: testDefaults); let model = stores.build
+        model.slots[0].paths = ["/games/Celeste [0100000000010000].nsp"]
+        model.running = true
+        defer { model.running = false }
+        let id = try XCTUnwrap(library.rememberInputs(model)).uuidString
+        driver.builds = model
+        driver.refresh()
+        let tile = try XCTUnwrap(driver.state.games.first { $0.id == id })
+        XCTAssertEqual(tile.status, .building)
+        XCTAssertTrue(tile.building)
+        XCTAssertEqual(driver.state.games.filter(\.building).map(\.id), [id], "only the game being built")
+
+        model.running = false
+        driver.refresh()
+        XCTAssertFalse(driver.state.games.contains { $0.id == id }, "no build came of it: Built hides it again")
+        XCTAssertFalse(driver.state.games.contains(where: \.building))
+
+        let hades = try XCTUnwrap(library.games.first { $0.isReady })
+        model.slots[0].paths = ["/games/Hades [\(hades.titleID)].nsp"]
+        model.running = true
+        _ = library.rememberInputs(model)
+        driver.refresh()
+        let rebuilt = try XCTUnwrap(driver.state.games.first { $0.id == hades.id.uuidString })
+        XCTAssertEqual(rebuilt.status, .ready)
+        XCTAssertTrue(rebuilt.building)
     }
 
     func testPlayRoutesToTheLaunchWithTheDesktopEnvironment() throws {

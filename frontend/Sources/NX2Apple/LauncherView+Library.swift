@@ -188,7 +188,7 @@ extension LauncherView {
                     .padTarget("library.filter", scope: "main", radius: 17,
                                activate: { setLibraryFilter(libraryFilter == .owned ? .built : .owned) },
                                adjust: { setLibraryFilter($0 > 0 ? .built : .owned) })
-                Text(String(format: loc.t("library.gameCount"), libraryFilter == .owned ? library.games.count : library.games.filter(libraryFilter.includes).count))
+                Text(String(format: loc.t("library.gameCount"), libraryFilter == .owned ? library.games.count : library.games.filter { libraryFilter.includes($0, building: buildingGameID) }.count))
                     .font(.manrope(12)).foregroundStyle(.secondary)
             }
             if games.isEmpty {
@@ -240,12 +240,20 @@ extension LauncherView {
         .padding(.horizontal, 34).padding(.top, 8).padding(.bottom, 22)
     }
 
+    /// A card's cover: in colour with a build (for this Mac or an iPhone: either one opens from here), grey without, and the build's
+    /// progress over it while this game builds, the activity bar's figure (CoverLook).
+    func cardLook(_ game: LibraryGame) -> CoverLook {
+        let building = m.running && activeBuildID == game.id
+        return CoverLook(built: game.isReady || game.hasIOSBuild, building: building, fraction: building ? buildProgress : nil)
+    }
+
     /// One card of the collection. A click selects its game; a long press picks the card up (the order becomes Custom, starting from
     /// the row as it is), it grows a little while pressed, and the mouse then drags it along the row until the button comes up (#937).
     func card(_ game: LibraryGame, width cardWidth: CGFloat, heroID: UUID?, rowWidth: CGFloat) -> some View {
         let id = game.id.uuidString
         let dragged = libraryDrag.id == id
         let lift: CGFloat = dragged ? 1.06 : (libraryDrag.pressing == id ? 1.03 : 1)
+        let look = cardLook(game)
         return VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 if let image = artwork[game.id] {
@@ -256,6 +264,7 @@ extension LauncherView {
                 }
             }
             .frame(width: cardWidth, height: cardWidth / 1.8).clipped()
+            .coverLook(look, percent: look.building ? buildProgress.map { "\(Int($0 * 100))%" } : nil, tint: LauncherPalette.building)
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(game.id == heroID ? LauncherPalette.cream : .clear, lineWidth: 2))
             Text(game.name).font(.manrope(16, .semibold)).lineLimit(1)

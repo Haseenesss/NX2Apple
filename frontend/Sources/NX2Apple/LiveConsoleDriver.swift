@@ -148,7 +148,7 @@ struct ConsolePadSnapshot: Equatable {
 
     func t(_ key: String) -> String { L10n.string(key, lang()) }
 
-    private func queueRefresh() {
+    func queueRefresh() {
         guard !refreshQueued else { return }
         refreshQueued = true
         DispatchQueue.main.async { [weak self] in self?.refreshQueued = false; self?.refresh() }
@@ -159,16 +159,18 @@ struct ConsolePadSnapshot: Equatable {
         let focus = state.focusedGameID
         let heroes = Dictionary(state.games.compactMap { g in g.hero.map { (g.id, ($0, g.heroFocus)) } }) { a, _ in a }   // kept across a refresh: no flash
         let ordered = LibraryOrder.load().arrange(library.games)   // the desktop row's order (#937)
-        let shown = LibraryFilter.load() == .built ? ordered.filter(LibraryFilter.built.includes) : ordered   // the desktop's filter
-        let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); return g })
+        let building = buildingGameID, filter = LibraryFilter.load()
+        let shown = ordered.filter { filter.includes($0, building: building) }   // the desktop's filter, the game being built too
+        let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0, building: $0.id == building); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); return g })
         state.games = games
         state.focusedGameID = games.contains { $0.id == focus } ? focus : (library.selected.map { $0.id.uuidString }.flatMap { id in games.contains { $0.id == id } ? id : nil } ?? games.first?.id)
         state.time = Date(); loadHero()
         reloadOpenDetails()   // the open options page keeps its mods, cheats, save and Reset
     }
 
-    static func status(of game: LibraryGame, brokenMessage: String) -> ConsoleGame.Status {
+    static func status(of game: LibraryGame, brokenMessage: String, building: Bool = false) -> ConsoleGame.Status {
         if game.isReady { return .ready }
+        if building { return .building }   // whatever it had before: this build is what decides it
         if game.hasIOSBuild || game.onDevice { return .iphoneOnly }   // built for iPhone: this Mac cannot play it until it is built for Mac
         if !game.appPath.isEmpty { return .broken(brokenMessage) }   // an app is recorded but is not a complete game app
         return game.inputs.values.contains { !$0.isEmpty } ? .needsBuild : .needsData
@@ -181,14 +183,18 @@ struct ConsolePadSnapshot: Equatable {
         return result.isEmpty ? [.mac] : result
     }
 
-    private func consoleGame(_ game: LibraryGame) -> ConsoleGame {
+    /// The library's entry of the build the desktop runs, nil with none.
+    var buildingGameID: UUID? { builds.flatMap { library.buildingID($0) } }
+
+    private func consoleGame(_ game: LibraryGame, building: Bool) -> ConsoleGame {
         let settings = game.isReady ? (LaunchSetting.forMac(app: game.appPath, titleID: game.titleID, repo: repo(), labels: labels) ?? []) : []
         let store = SavedChoices(app: game.appPath, titleID: game.titleID)
         var values: [String: String] = [:]
         for s in settings { values[s.env] = s.storeBacked ? store.current(s) : game.launchValue(s) }
         return ConsoleGame(id: game.id.uuidString, title: game.name, version: version(of: game),
                            platforms: Self.platforms(of: game), artwork: cover(game), artworkFocus: game.artwork.focus(for: .thumbnail),
-                           status: Self.status(of: game, brokenMessage: t("console.broken")), settings: settings, values: values,
+                           status: Self.status(of: game, brokenMessage: t("console.broken"), building: building), building: building,
+                           settings: settings, values: values,
                            mapsButtons: game.isReady && SavedChoices.appReadsControllerMappings(app: game.appPath)
                                && game.controllerSavingEnabled(environment: game.launchOptions))
     }

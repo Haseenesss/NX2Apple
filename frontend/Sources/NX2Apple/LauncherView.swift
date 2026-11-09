@@ -103,7 +103,8 @@ struct LauncherView: View {
         guard filter != libraryFilter else { return }
         withAnimation(.easeInOut(duration: 0.2)) { libraryFilter = filter }
         filter.save()
-        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused, order: libraryOrder)
+        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused, order: libraryOrder,
+                                   building: buildingGameID)
         if after.selectedID != library.selectedID { library.selectedID = after.selectedID }
         if after.focused != padFocus.focused { padFocus.focused = after.focused }
     }
@@ -117,20 +118,22 @@ struct LauncherView: View {
         order.save()
     }
 
+    /// The game the running build makes: its card shows under Built too, greyed with the build's progress until it is done.
+    var buildingGameID: UUID? { m.running ? activeBuildID : nil }
     /// A card dragged along the collection with the mouse after a long press (RowDrag), and where each card is, in the row's space.
     @StateObject var libraryDrag = RowDrag()
     @State var cardFrames: [String: CGRect] = [:]
     @State var libraryRowOriginX: CGFloat = 0
 
     var filteredGames: [LibraryGame] {
-        libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder)
+        libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder, building: buildingGameID)
     }
 
     /// The hero's game: the selection, unless the filter hides it, then the first game the filter shows.
     var heroGame: LibraryGame? {
         guard libraryFilter != .owned else { return library.selected }
-        if let selected = library.selected, libraryFilter.includes(selected) { return selected }
-        return libraryFilter.visibleGames(library.games, order: libraryOrder).first
+        if let selected = library.selected, libraryFilter.includes(selected, building: buildingGameID) { return selected }
+        return libraryFilter.visibleGames(library.games, order: libraryOrder, building: buildingGameID).first
     }
 
     var body: some View {
@@ -554,11 +557,8 @@ struct LauncherView: View {
         }
     }
 
-    private var buildProgress: Double? {
-        // The script reports a percentage for the current step, not for all remaining work.
-        guard let percent = m.stages.last(where: { $0.state == .running })?.percent else { return nil }
-        return percent / 100
-    }
+    /// The running stage's progress (BuildStore.stageFraction): the activity bar's and the building card's.
+    var buildProgress: Double? { m.stageFraction }
 
     func newBuild() {
         guard !m.running else { page = .builds; return }

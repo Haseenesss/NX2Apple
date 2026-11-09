@@ -12,18 +12,22 @@ enum LauncherPage: String, CaseIterable {
     }
 }
 
-/// The library's filter: every game in the games folder, or only those with a build. Remembered between launches.
+/// The library's filter: every game in the games folder, or only those with a build. Remembered between launches. The game being
+/// built shows under Built as well: its card is there from the start of the build, greyed, and comes to colour when it is done.
 enum LibraryFilter: String, CaseIterable, Identifiable {
     case owned, built
     var id: String { rawValue }
     var labelKey: String { "filter." + rawValue }
 
-    /// Owned shows every game without reading its build, so the default filter costs nothing per card.
-    func includes(_ game: LibraryGame) -> Bool { self == .owned || game.isReady || game.hasIOSBuild }
+    /// Owned shows every game without reading its build, so the default filter costs nothing per card. `building` is the library
+    /// entry of the build running now (GameLibrary.buildingID), nil with none.
+    func includes(_ game: LibraryGame, building: UUID? = nil) -> Bool {
+        self == .owned || game.isReady || game.hasIOSBuild || game.id == building
+    }
 
     /// The games this filter shows, in `order` (by name unless asked otherwise).
-    func visibleGames(_ games: [LibraryGame], matching search: String = "", order: LibraryOrder = .name) -> [LibraryGame] {
-        order.arrange(games.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && includes($0) })
+    func visibleGames(_ games: [LibraryGame], matching search: String = "", order: LibraryOrder = .name, building: UUID? = nil) -> [LibraryGame] {
+        order.arrange(games.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && includes($0, building: building) })
     }
 
     static func load(_ defaults: UserDefaults = .standard) -> LibraryFilter {
@@ -34,8 +38,9 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     /// The selection and the controller's focus after a switch to this filter. A selected game the filter hides gives way to the
     /// first one it shows, and a focus on a hidden card is dropped, so neither the hero nor the A button reaches a game that is not
     /// on screen.
-    func reconcile(games: [LibraryGame], selectedID: UUID?, focused: String?, order: LibraryOrder = .name) -> (selectedID: UUID?, focused: String?) {
-        let shown = visibleGames(games, order: order)
+    func reconcile(games: [LibraryGame], selectedID: UUID?, focused: String?, order: LibraryOrder = .name,
+                   building: UUID? = nil) -> (selectedID: UUID?, focused: String?) {
+        let shown = visibleGames(games, order: order, building: building)
         let selection = shown.contains { $0.id == selectedID } ? selectedID : shown.first?.id
         guard let focused, focused.hasPrefix("card.") else { return (selection, focused) }
         return (selection, shown.contains { "card." + $0.id.uuidString == focused } ? focused : nil)
