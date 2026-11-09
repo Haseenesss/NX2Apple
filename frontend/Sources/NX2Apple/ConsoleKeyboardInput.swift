@@ -37,6 +37,7 @@ struct ConsoleKeyboardInput: NSViewRepresentable {
                 case "y", "o": return .options
                 case "m", "+", "=": return .menu
                 case "f": return .displayMode
+                case "r": return .arrange
                 default: return nil
                 }
             }

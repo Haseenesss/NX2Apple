@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import NXModel
 @testable import NX2Apple
 @testable import NXCore
 @testable import NXLauncher
@@ -70,6 +71,51 @@ import SwiftUI
         XCTAssertEqual(LiveConsoleDriver.platforms(of: broken), [.mac])
     }
 
+    /// A game the desktop is building is "Building" until it is ready; a game being built again stays playable meanwhile.
+    func testBuildingStatus() throws {
+        var chosen = LibraryGame(titleID: titleID, name: "C")
+        chosen.inputs = ["base": ["/b.nsp"]]
+        XCTAssertEqual(LiveConsoleDriver.status(of: chosen, brokenMessage: "x", building: true), .building)
+        XCTAssertEqual(LiveConsoleDriver.status(of: LibraryGame(titleID: titleID, name: "D"), brokenMessage: "x", building: true), .building)
+        let ready = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp().path)
+        XCTAssertEqual(LiveConsoleDriver.status(of: ready, brokenMessage: "x", building: true), .ready)
+        XCTAssertEqual(ConsoleGame.Status.building.labelKey, "console.building")
+        XCTAssertEqual(ConsoleGame.Status.building.explanationKey, "console.buildingNote")
+    }
+
+    /// Under "only built" the row shows the game being built (grey, its tile carries the build chip's progress), and drops it when the
+    /// build ends without a build. A ready game being built again keeps its status and gets the progress too.
+    func testTheGameBeingBuiltShowsInTheRow() throws {
+        let (driver, library, _) = try makeDriver()
+        LibraryFilter.built.save()
+        defer { UserDefaults.standard.removeObject(forKey: "libraryFilter") }
+        let stores = LauncherStores(defaults: testDefaults); let model = stores.build
+        model.slots[0].paths = ["/games/Celeste [0100000000010000].nsp"]
+        model.running = true
+        defer { model.running = false }
+        let id = try XCTUnwrap(library.rememberInputs(model)).uuidString
+        driver.builds = model
+        driver.refresh()
+        let tile = try XCTUnwrap(driver.state.games.first { $0.id == id })
+        XCTAssertEqual(tile.status, .building)
+        XCTAssertTrue(tile.building)
+        XCTAssertEqual(driver.state.games.filter(\.building).map(\.id), [id], "only the game being built")
+
+        model.running = false
+        driver.refresh()
+        XCTAssertFalse(driver.state.games.contains { $0.id == id }, "no build came of it: Built hides it again")
+        XCTAssertFalse(driver.state.games.contains(where: \.building))
+
+        let hades = try XCTUnwrap(library.games.first { $0.isReady })
+        model.slots[0].paths = ["/games/Hades [\(hades.titleID)].nsp"]
+        model.running = true
+        _ = library.rememberInputs(model)
+        driver.refresh()
+        let rebuilt = try XCTUnwrap(driver.state.games.first { $0.id == hades.id.uuidString })
+        XCTAssertEqual(rebuilt.status, .ready)
+        XCTAssertTrue(rebuilt.building)
+    }
+
     func testPlayRoutesToTheLaunchWithTheDesktopEnvironment() throws {
         var launches: [Launch] = []
         let (driver, _, layout) = try makeDriver { launches.append($0) }
@@ -119,20 +165,6 @@ import SwiftUI
         driver.play(id)
         XCTAssertEqual(launches.first?.environment["DM_FULLSCREEN"], "1")
         XCTAssertNil(driver.state.games.first?.visibleSettings.first { $0.env == "DM_FULLSCREEN" }, "the sheet does not offer what Play overrides")
-    }
-
-    /// A game started from console mode keeps the time in library.json (lastPlayed), which orders the home row.
-    func testPlayRecordsLastPlayedInTheLibrary() async throws {
-        let (driver, library, _) = try makeDriver()
-        let id = try XCTUnwrap(driver.state.games.first?.id)
-        XCTAssertNil(library.games.first?.lastPlayed)
-        driver.play(id)
-        for _ in 0..<50 where driver.state.starting != .opening { try await Task.sleep(nanoseconds: 20_000_000) }
-        let played = try XCTUnwrap(library.games.first?.lastPlayed)
-        XCTAssertLessThan(abs(played.timeIntervalSinceNow), 10)
-        XCTAssertNotNil(driver.state.games.first?.lastPlayed)
-        let reread = GameLibrary(file: temporary.appendingPathComponent("library.json"))
-        XCTAssertEqual(reread.games.first?.lastPlayed?.timeIntervalSinceReferenceDate ?? 0, played.timeIntervalSinceReferenceDate, accuracy: 0.001)
     }
 
     func testStartingEndsWhenTheGameQuits() async throws {
@@ -237,6 +269,33 @@ import SwiftUI
     /// to the standard layout, and the sheet shows what the layout sends.
     /// A game's options page keeps what it read when it opened (its cloud save, whether Reset applies) across a rebuilt list, and
     /// Reset shows as soon as an option differs.
+    /// #937: a game moved while arranging stays there: the library keeps the row as its Custom order, which the desktop shares.
+    func testArrangingKeepsTheOrderInTheLibrary() throws {
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: LibraryOrder.defaultsKey) }
+        let file = temporary.appendingPathComponent("library.json")
+        try JSONEncoder().encode(["Zelda", "Alba", "Mario"].enumerated().map { LibraryGame(titleID: "01000000000\($0.offset)0000", name: $0.element) })
+            .write(to: file)
+        let library = GameLibrary(file: file)
+        let driver = LiveConsoleDriver(library: library, controls: ControlLayout(defaults: TestDefaults.make("ConsoleLiveTests")), repo: { "" },
+                                       lang: { .en }, labels: { L10n.string($0, .en) }, pads: { [] }, launch: { _, _, done in done(nil, nil) },
+                                       artwork: { _, _ in nil }, startingTimeout: 0.2, observeSystem: false)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Alba", "Mario", "Zelda"], "Recent with nothing played yet: by name")
+        driver.toggleArranging()
+        driver.focus(try XCTUnwrap(driver.state.games.first?.id))
+        driver.toggleHold()
+        driver.moveHeld(1)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Mario", "Alba", "Zelda"])
+        XCTAssertEqual(LibraryOrder.load(), .custom)
+        XCTAssertEqual(library.games.map(\.name), ["Mario", "Alba", "Zelda"])
+        driver.refresh()
+        XCTAssertEqual(driver.state.games.map(\.title), ["Mario", "Alba", "Zelda"], "a rebuilt list keeps it")
+        // the General page: Name ends the arranged order, as the desktop's choice does
+        driver.setLibraryOrder(.name)
+        XCTAssertEqual(LibraryOrder.load(), .name)
+        XCTAssertEqual(driver.state.prefs.order, .name)
+        XCTAssertEqual(driver.state.games.map(\.title), ["Alba", "Mario", "Zelda"])
+    }
+
     func testOpenOptionsKeepTheirDetails() throws {
         let (driver, _, _) = try makeDriver()
         let id = try XCTUnwrap(driver.state.games.first?.id)

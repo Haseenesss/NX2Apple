@@ -22,7 +22,7 @@ struct ConsoleGlyphs: Equatable {
         }
     }
     /// A button as GameController names it.
-    enum Element: Hashable { case a, b, x, y, menu, select }
+    enum Element: Hashable { case a, b, x, y, menu, select, shoulderR }
     enum Role {
         /// options: Y, the focused game's options. menu: the menu button (+, Menu, Options), the console's menu (Controllers, Button
         /// mapping, leaving console mode).
@@ -31,12 +31,15 @@ struct ConsoleGlyphs: Equatable {
         case launchOptions, manage
         /// The Select-type button (Share, Create, View, Minus): opens console mode from the desktop (and the menu in console mode).
         case select
+        /// The right shoulder (RB, R1, R): arranges console mode's row of games.
+        case arrange
         var element: Element {
             switch self {
             case .activate: return Self.element(of: .a)
             case .back: return Self.element(of: .b)
             case .menu: return .menu
             case .select: return .select
+            case .arrange: return .shoulderR
             case .options, .manage: return Self.element(of: .y)
             case .launchOptions: return Self.element(of: .x)
             }
@@ -51,14 +54,14 @@ struct ConsoleGlyphs: Equatable {
             }
         }
         var keyCap: String {
-            switch self { case .activate: return "return"; case .back: return "escape"; case .options: return "Y"; case .launchOptions: return "O"; case .menu: return "M"; case .manage: return "Y"; case .select: return "\u{2325}\u{2318}K" }
+            switch self { case .activate: return "return"; case .back: return "escape"; case .options: return "Y"; case .launchOptions: return "O"; case .menu: return "M"; case .manage: return "Y"; case .select: return "\u{2325}\u{2318}K"; case .arrange: return "R" }
         }
         /// Keys drawn as an SF Symbol in their cap (Return, Escape) instead of a word.
         var keySymbol: Bool {
             switch self { case .activate, .back: return true; default: return false }
         }
         var letter: String {
-            switch self { case .activate: return "A"; case .back: return "B"; case .menu: return "+"; case .launchOptions: return "X"; case .options, .manage: return "Y"; case .select: return "\u{2212}" }
+            switch self { case .activate: return "A"; case .back: return "B"; case .menu: return "+"; case .launchOptions: return "X"; case .options, .manage: return "Y"; case .select: return "\u{2212}"; case .arrange: return "R" }
         }
     }
     enum Glyph: Equatable { case symbol(String), key(String), keySymbol(String), letter(String) }
@@ -79,11 +82,11 @@ struct ConsoleGlyphs: Equatable {
     /// What a family's elements are printed with, for a controller that reports no symbol of its own.
     static func table(_ family: Family) -> [Element: String] {
         switch family {
-        case .xbox: return [.a: "a.circle", .b: "b.circle", .x: "x.circle", .y: "y.circle", .menu: "line.3.horizontal.circle", .select: "minus.circle"]
-        case .playStation: return [.a: "xmark.circle", .b: "circle.circle", .x: "square.circle", .y: "triangle.circle", .menu: "line.3.horizontal.circle", .select: "minus.circle"]
-        case .nintendo: return [.a: "a.circle", .b: "b.circle", .x: "x.circle", .y: "y.circle", .menu: "plus.circle", .select: "minus.circle"]
+        case .xbox: return [.a: "a.circle", .b: "b.circle", .x: "x.circle", .y: "y.circle", .menu: "line.3.horizontal.circle", .select: "minus.circle", .shoulderR: "rb.rectangle.roundedbottom"]
+        case .playStation: return [.a: "xmark.circle", .b: "circle.circle", .x: "square.circle", .y: "triangle.circle", .menu: "line.3.horizontal.circle", .select: "minus.circle", .shoulderR: "r1.rectangle.roundedbottom"]
+        case .nintendo: return [.a: "a.circle", .b: "b.circle", .x: "x.circle", .y: "y.circle", .menu: "plus.circle", .select: "minus.circle", .shoulderR: "r.rectangle.roundedbottom"]
         case .keyboard: return [:]
-        case .neutral: return [.select: "minus.circle"]
+        case .neutral: return [.select: "minus.circle", .shoulderR: "r.rectangle.roundedbottom"]
         }
     }
 
@@ -96,6 +99,7 @@ struct ConsoleGlyphs: Equatable {
             for (element, button) in elements { if let name = button.sfSymbolsName { reported[element] = name } }
             // The system's own symbol for the Select-type button, whatever the controller calls it
             if let name = pad.buttonOptions?.sfSymbolsName { reported[.select] = name }
+            if let name = pad.rightShoulder.sfSymbolsName { reported[.shoulderR] = name }
         }
     }
 

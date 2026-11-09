@@ -23,10 +23,15 @@ import NXLauncher
     func requestAssignment(controllerID: String) { base.requestAssignment(controllerID: controllerID) }
     func identify(controllerID: String) { base.identify(controllerID: controllerID) }
     func openMenu() { base.openMenu() }
+    func toggleArranging() { base.toggleArranging() }
+    func toggleHold() { base.toggleHold() }
+    func moveHeld(_ step: Int) { base.moveHeld(step) }
+    func pickUp(_ gameID: String) { base.pickUp(gameID) }
+    func putDown() { base.putDown() }
+    func setLibraryOrder(_ order: LibraryOrder) { base.setLibraryOrder(order) }
     func openLibrary() { base.openLibrary() }
     func pickFromLibrary(_ gameID: String) { base.pickFromLibrary(gameID) }
     func loadSaveStates() { base.loadSaveStates() }
-    func setLibrarySort(_ sort: ConsoleLibrarySort) { base.setLibrarySort(sort) }
     func openSettings() { base.openSettings() }
     func openCloudSaves() { base.openCloudSaves() }
     func openLanguage() { base.openLanguage() }
@@ -148,6 +153,10 @@ struct ConsoleBattery: View {
         } else if controller.charging {
             HStack(spacing: 5) { BatteryIcon(level: nil, charging: true, height: compact ? 10 : 13) }
                 .accessibilityElement(children: .ignore).accessibilityLabel(L10n.string("console.charging", lang))
+        } else if style.showsIcon, controller.kind != .keyboard {
+            // a controller whose battery macOS does not report (an Xbox pad over Bluetooth): the outline alone, never a guessed number
+            BatteryIcon(level: nil, charging: false, height: compact ? 10 : 13)
+                .accessibilityElement(children: .ignore).accessibilityLabel(L10n.string("console.batteryUnknown", lang))
         }
     }
 }

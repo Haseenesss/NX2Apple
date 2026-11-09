@@ -95,25 +95,45 @@ struct LauncherView: View {
     }
 
     @State var libraryFilter: LibraryFilter = LibraryFilter.load()
+    /// The row's order (#937), shared with console mode: arranging there makes it Custom, which the desktop shows as neither choice.
+    /// A state of its own, saved on change and read again when the defaults change, so a choice here animates as the filter does.
+    @State var libraryOrder: LibraryOrder = LibraryOrder.load()
 
     func setLibraryFilter(_ filter: LibraryFilter) {
         guard filter != libraryFilter else { return }
         withAnimation(.easeInOut(duration: 0.2)) { libraryFilter = filter }
         filter.save()
-        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused)
+        let after = filter.reconcile(games: library.games, selectedID: library.selectedID, focused: padFocus.focused, order: libraryOrder,
+                                   building: buildingGameID)
         if after.selectedID != library.selectedID { library.selectedID = after.selectedID }
         if after.focused != padFocus.focused { padFocus.focused = after.focused }
     }
 
+    /// Recent or Name; either also ends an order arranged in console mode.
+    func setLibraryOrder(_ order: LibraryOrder) {
+        guard order != libraryOrder else { return }
+        // Custom starts from the row as it is, so dragging the first card moves nothing else (#937)
+        if order == .custom { library.adoptOrder(libraryOrder.arrange(library.games).map(\.id)) }
+        withAnimation(.easeInOut(duration: 0.2)) { libraryOrder = order }
+        order.save()
+    }
+
+    /// The game the running build makes: its card shows under Built too, greyed with the build's progress until it is done.
+    var buildingGameID: UUID? { m.running ? activeBuildID : nil }
+    /// A card dragged along the collection with the mouse after a long press (RowDrag), and where each card is, in the row's space.
+    @StateObject var libraryDrag = RowDrag()
+    @State var cardFrames: [String: CGRect] = [:]
+    @State var libraryRowOriginX: CGFloat = 0
+
     var filteredGames: [LibraryGame] {
-        libraryFilter.visibleGames(library.games, matching: search)
+        libraryFilter.visibleGames(library.games, matching: search, order: libraryOrder, building: buildingGameID)
     }
 
     /// The hero's game: the selection, unless the filter hides it, then the first game the filter shows.
     var heroGame: LibraryGame? {
         guard libraryFilter != .owned else { return library.selected }
-        if let selected = library.selected, libraryFilter.includes(selected) { return selected }
-        return libraryFilter.visibleGames(library.games).first
+        if let selected = library.selected, libraryFilter.includes(selected, building: buildingGameID) { return selected }
+        return libraryFilter.visibleGames(library.games, order: libraryOrder, building: buildingGameID).first
     }
 
     var body: some View {
@@ -230,6 +250,10 @@ struct LauncherView: View {
             page = route.page
             if let id = route.game { library.selectedID = id }
             DispatchQueue.main.async { BuildNotifier.shared.route = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in
+            let saved = LibraryOrder.load()   // console mode arranged the row (Custom), or another window chose
+            if saved != libraryOrder { withAnimation(.easeInOut(duration: 0.2)) { libraryOrder = saved } }
         }
         .onChange(of: library.games) { _ in
             if performStartupChecks { library.syncSharedApp(root: m.shellCachePath) }
@@ -533,11 +557,8 @@ struct LauncherView: View {
         }
     }
 
-    private var buildProgress: Double? {
-        // The script reports a percentage for the current step, not for all remaining work.
-        guard let percent = m.stages.last(where: { $0.state == .running })?.percent else { return nil }
-        return percent / 100
-    }
+    /// The running stage's progress (BuildStore.stageFraction): the activity bar's and the building card's.
+    var buildProgress: Double? { m.stageFraction }
 
     func newBuild() {
         guard !m.running else { page = .builds; return }
@@ -692,7 +713,7 @@ struct LauncherView: View {
                     MainActor.assumeIsolated {
                         launching = false
                         if let error { launchError = error.localizedDescription }
-                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid); library.recordPlayed(game.id) }   // ReturnAfterPlay.swift; lastPlayed orders console mode's home row
+                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid) { library.markPlayed(game.id) } }   // ReturnAfterPlay.swift; the Recent order puts it first
                     }
                 }
             }

@@ -71,8 +71,170 @@ import NXModel
     func testGamepadActionsMapToConsoleInputs() {
         let expected: [(LauncherGamepad.Action, ConsoleInput?)] = [
             (.left, .left), (.right, .right), (.up, .up), (.down, .down), (.a, .activate), (.b, .back),
-            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, nil), (.zl, .first), (.zr, .last), (.rs, .displayMode)]
+            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, .arrange), (.zl, .first), (.zr, .last), (.rs, .displayMode)]
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
+    }
+
+    /// The mouse (#937): a long press picks a game up and starts arranging, letting go puts it down and arranging goes on. A game moves
+    /// within its group, and the line between the groups is drawn before the first game still to build.
+    func testTheMousePicksUpAndPutsDownWithinItsGroup() {
+        func game(_ id: String, _ status: ConsoleGame.Status) -> ConsoleGame {
+            ConsoleGame(id: id, title: id, version: "", platforms: [.mac], artwork: nil, status: status)
+        }
+        var state = ConsoleState()
+        state.games = [game("a", .ready), game("b", .ready), game("c", .ready), game("d", .needsBuild), game("e", .needsBuild)]
+        XCTAssertEqual(state.groupBoundaryID, "d")
+        state.pickUp("b")
+        XCTAssertTrue(state.arranging, "a long press starts arranging")
+        XCTAssertEqual(state.heldGameID, "b")
+        XCTAssertEqual(state.focusedGameID, "b")
+        XCTAssertEqual(state.heldRange, 0...2, "the games ready on this Mac")
+        _ = state.moveHeld(1)
+        XCTAssertNil(state.moveHeld(1), "not past the last ready game")
+        XCTAssertEqual(state.games.map(\.id), ["a", "c", "b", "d", "e"])
+        state.putDown()
+        XCTAssertNil(state.heldGameID)
+        XCTAssertTrue(state.arranging, "letting go leaves arranging on, as on an iPhone")
+        state.pickUp("e")
+        XCTAssertEqual(state.heldRange, 3...4)
+        state.sheets = [.menu]; state.arranging = false; state.heldGameID = nil
+        state.pickUp("a")
+        XCTAssertFalse(state.arranging, "not over a sheet")
+    }
+
+    /// The card under the pointer: it is drawn where the pointer took it, it asks to move once its middle passes the next card's,
+    /// it takes its new place at once when it moves (no jump while the frames come back), and the release puts it down.
+    @MainActor func testADraggedCardFollowsThePointerAndPassesItsNeighbours() {
+        let frames = ["a": CGRect(x: 0, y: 0, width: 100, height: 60), "b": CGRect(x: 120, y: 0, width: 100, height: 60),
+                      "c": CGRect(x: 240, y: 0, width: 100, height: 60)]
+        let drag = RowDrag()
+        var released = 0
+        drag.begin("b", frame: frames["b"], rowOriginX: 0, rowWidth: 1000, pointerX: 170, onRelease: { released += 1 })
+        XCTAssertEqual(drag.offset(for: "b"), 0)
+        XCTAssertEqual(drag.offset(for: "a"), 0, "only the dragged card moves with the pointer")
+        drag.moved(to: 200)
+        XCTAssertEqual(drag.offset(for: "b"), 30)
+        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 0, "its middle (200) is short of c's (290)")
+        drag.moved(to: 300)
+        XCTAssertEqual(drag.step(order: ["a", "b", "c"], frames: frames), 1)
+        drag.stepped(into: frames["c"], step: 1, frame: frames["b"])
+        XCTAssertEqual(120 + 130 - 240 as CGFloat, drag.offset(for: "b"), "drawn from its new place (240) at once, still under the pointer")
+        XCTAssertEqual(drag.step(order: ["a", "c", "b"], frames: frames), 0, "no second step before the frames come back")
+        let after = ["a": frames["a"]!, "c": CGRect(x: 120, y: 0, width: 100, height: 60), "b": CGRect(x: 240, y: 0, width: 100, height: 60)]
+        drag.framesChanged(after)
+        XCTAssertEqual(drag.offset(for: "b"), 10)
+        drag.moved(to: 40)
+        XCTAssertEqual(drag.step(order: ["a", "c", "b"], frames: after), -1)
+        drag.moved(to: 30)
+        XCTAssertEqual(drag.edgeDirection, -1, "near the left end the row scrolls left")
+        XCTAssertEqual(RowDrag.nextCard(1, order: ["a", "b", "c"], frames: frames, rowWidth: 300), "c")
+        drag.release()
+        XCTAssertEqual(released, 1, "the button coming up puts the card down")
+        XCTAssertFalse(drag.active)
+        XCTAssertEqual(drag.offset(for: "b"), 0)
+        drag.release()
+        XCTAssertEqual(released, 1, "once")
+    }
+
+    /// The row scrolls as the focus walks along it: the focused game is always in view. It sits in a vertical ScrollView, where
+    /// ScrollViewReader did not scroll it, so the AppKit scroll view is moved directly (RowScroller.reveal).
+    @MainActor func testTheRowScrollsToTheFocusedGame() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1000, height: 650))
+        let window = OffscreenWindow(size: NSSize(width: 1000, height: 650), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)); host.layoutSubtreeIfNeeded() }
+        settle()
+        for _ in 0..<6 { gamepad.perform(.right); settle() }
+        let scroll = try XCTUnwrap(Self.scrollViews(in: host).first { $0.hasHorizontalScroller || ($0.documentView?.frame.width ?? 0) > $0.contentView.bounds.width + 1 })
+        XCTAssertGreaterThan(scroll.contentView.bounds.minX, 100, "the row scrolled to the sixth game")
+    }
+
+    private static func scrollViews(in view: NSView) -> [NSScrollView] {
+        ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
+    /// RB changes none of the row's geometry: the scroll view keeps its frame and its scroll. It had widened to the screen's edges
+    /// with the page margin moved inside; the AppKit scroll view took its new frame at once while the padding sprang with the rest of
+    /// the page, so every tile jerked aside and back.
+    @MainActor func testArrangingLeavesTheRowWhereItIs() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1000, height: 650))
+        let window = OffscreenWindow(size: NSSize(width: 1000, height: 650), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.6)); host.layoutSubtreeIfNeeded() }
+        settle()
+        for _ in 0..<3 { gamepad.perform(.right); settle() }
+        let scroll = try XCTUnwrap(Self.scrollViews(in: host).first { $0.hasHorizontalScroller || ($0.documentView?.frame.width ?? 0) > $0.contentView.bounds.width + 1 })
+        let frame = scroll.convert(scroll.bounds, to: nil), offset = scroll.contentView.bounds.minX
+        gamepad.perform(.r); settle()
+        XCTAssertTrue(driver.state.arranging)
+        XCTAssertEqual(scroll.convert(scroll.bounds, to: nil).minX, frame.minX, accuracy: 0.5, "the row's left edge stays")
+        XCTAssertEqual(scroll.convert(scroll.bounds, to: nil).width, frame.width, accuracy: 0.5, "and its width")
+        XCTAssertEqual(scroll.contentView.bounds.minX, offset, accuracy: 0.5, "and its scroll")
+    }
+
+    /// The row shows about three and a half games, so the next one shows at the edge; a game cut there is drawn smaller and fainter.
+    func testTheRowShowsThatMoreGamesFollow() {
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1792), 380, "a big screen: the widest tile")
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 600), 200, "a small window: the narrowest")
+        let mid = ConsoleGameRow<MockConsoleDriver>.tileWidth(rowWidth: 1100)
+        XCTAssertGreaterThan(1100, 3 * mid + 3 * 28, "three tiles and part of a fourth")
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: 10, y: 0, width: 300, height: 1), rowWidth: 1000), 1)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: 850, y: 0, width: 300, height: 1), rowWidth: 1000), 0.5)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(CGRect(x: -150, y: 0, width: 300, height: 1), rowWidth: 1000), 0.5)
+        XCTAssertEqual(ConsoleGameRow<MockConsoleDriver>.shownFraction(nil, rowWidth: 1000), 1)
+    }
+
+    /// Picking a game up starts arranging, which moves the row in the window by the page margin: the card stays under the pointer.
+    @MainActor func testADraggedCardStaysPutWhenTheRowMoves() {
+        let drag = RowDrag()
+        drag.begin("b", frame: CGRect(x: 100, y: 0, width: 200, height: 100), rowOriginX: 56, rowWidth: 900, pointerX: 150)
+        drag.rowMoved(originX: 0, rowWidth: 1012)   // the scroll area now starts at the screen's edge
+        drag.framesChanged(["b": CGRect(x: 156, y: 0, width: 200, height: 100)])   // the same place on screen, in the new row
+        XCTAssertEqual(drag.offset(for: "b"), 0, "no jump by the margin")
+        drag.moved(to: 236)   // 30 points right of where the pointer was, in the new row
+        XCTAssertEqual(drag.offset(for: "b"), 30)
+        drag.end()
+    }
+
+    /// A game picked up never grows past the screen's edge: the full lift where the margin holds it, less where it is narrow.
+    func testHeldTileGrowsOnlyAsTheRoomAllows() {
+        XCTAssertEqual(ConsoleArrange.heldScale(width: 470, room: 64), ConsoleArrange.maxScale, "a wide margin takes the full lift")
+        let narrow = ConsoleArrange.heldScale(width: 470, room: 24)
+        XCTAssertLessThan(narrow, ConsoleArrange.maxScale)
+        XCTAssertLessThanOrEqual(470 * (narrow - 1) / 2 + ConsoleArrange.arrowOverhang, 24, "the growth and the arrows fit the room")
+        XCTAssertEqual(ConsoleArrange.heldScale(width: 330, room: 4), 1, "no room: no growth")
+    }
+
+    /// #937: arranging moves the held game within its group (games ready on this Mac stay first) and not past the row's ends.
+    func testArrangingMovesTheHeldGameWithinItsGroup() {
+        func game(_ id: String, _ status: ConsoleGame.Status) -> ConsoleGame {
+            ConsoleGame(id: id, title: id, version: "", platforms: [.mac], artwork: nil, status: status)
+        }
+        var state = ConsoleState()
+        state.games = [game("a", .ready), game("b", .ready), game("c", .needsBuild)]
+        state.toggleHold()
+        XCTAssertNil(state.heldGameID, "nothing is picked up outside arranging")
+        state.toggleArranging(); state.focus("a"); state.toggleHold()
+        XCTAssertEqual(state.heldGameID, "a")
+        XCTAssertFalse(state.canMoveHeld(-1), "not past the start")
+        XCTAssertEqual(state.moveHeld(1), ["a", "b", "c"], "the row before the move")
+        XCTAssertEqual(state.games.map(\.id), ["b", "a", "c"])
+        XCTAssertNil(state.moveHeld(1), "a ready game does not go among the games still to build")
+        XCTAssertEqual(state.games.map(\.id), ["b", "a", "c"])
+        state.back()
+        XCTAssertNil(state.heldGameID); XCTAssertTrue(state.arranging)
+        state.back()
+        XCTAssertFalse(state.arranging); XCTAssertNil(state.presentedSheet, "B ends arranging without asking to leave")
+        state.sheets = [.menu]; state.toggleArranging()
+        XCTAssertFalse(state.arranging, "not over a sheet")
     }
 
     /// Hosts the console view and drives it only through `gamepad.perform`, as Gamepad.swift does on a button edge.
@@ -120,8 +282,23 @@ import NXModel
         XCTAssertNil(driver.state.startingGameID, "and not to a game")
         gamepad.perform(.b); settle()
         XCTAssertNil(driver.state.presentedSheet)
-        gamepad.perform(.l); gamepad.perform(.r); settle()
-        XCTAssertNil(driver.state.presentedSheet, "L and R do nothing on the home screen")
+        gamepad.perform(.l); settle()
+        XCTAssertNil(driver.state.presentedSheet, "L does nothing")
+        // R arranges the row (#937): A picks the focused game up and B puts it down, B again or R ends arranging
+        let focused = driver.state.focusedGame?.id
+        gamepad.perform(.r); settle()
+        XCTAssertTrue(driver.state.arranging, "R arranges the row")
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.heldGameID, focused, "A picks the focused game up")
+        XCTAssertNil(driver.state.startingGameID, "and does not start it")
+        gamepad.perform(.b); settle()
+        XCTAssertNil(driver.state.heldGameID, "B puts it down")
+        XCTAssertTrue(driver.state.arranging)
+        gamepad.perform(.b); settle()
+        XCTAssertFalse(driver.state.arranging, "B again ends arranging")
+        XCTAssertNil(driver.state.presentedSheet)
+        gamepad.perform(.r); settle(); gamepad.perform(.r); settle()
+        XCTAssertFalse(driver.state.arranging, "R again ends it too")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .confirmExit, "B from Home asks before leaving")
         XCTAssertFalse(driver.state.exited)
@@ -369,6 +546,7 @@ import NXModel
         XCTAssertTrue(ConsoleBatteryStyle.percent.showsPercent); XCTAssertFalse(ConsoleBatteryStyle.percent.showsIcon)
         XCTAssertFalse(ConsoleBatteryStyle.hidden.showsIcon || ConsoleBatteryStyle.hidden.showsPercent)
         for style in ConsoleBatteryStyle.allCases { XCTAssertFalse(L10n.string(style.titleKey, .de).isEmpty) }
+        XCTAssertFalse(L10n.string("console.batteryUnknown", .de).isEmpty, "the outline for a battery macOS does not report has a label")
     }
 
     func testGlyphFamiliesFromCategory() {
@@ -537,19 +715,15 @@ import NXModel
         XCTAssertFalse(state.moveFocus(1))
     }
 
-    /// The row is the first N games, the most recently played first and the never played by name; the tile is there whatever N is.
-    @MainActor func testHomeGamesTakeTheMostRecentAndKeepTheTile() throws {
+    /// The row is the first N games in the library's order (#937: Recent, Name or arranged); the tile is there whatever N is.
+    @MainActor func testHomeGamesTakeTheFirstGamesAndKeepTheTile() throws {
         let driver = MockConsoleDriver(scenario: .full, animated: false)
         XCTAssertEqual(driver.state.homeLimit, 10, "ten by default")
-        XCTAssertEqual(driver.state.homeGames.map(\.id), Array(driver.state.games.prefix(10)).map(\.id), "the demo's order is its play order")
+        XCTAssertEqual(driver.state.homeGames.map(\.id), Array(driver.state.games.prefix(10)).map(\.id), "the library's order")
         driver.setHomeLimit(.six)
         XCTAssertEqual(driver.state.homeGames.count, 6)
         driver.setHomeLimit(.all)
-        XCTAssertEqual(driver.state.homeGames.count, 12)
-        // the two never played come last, by name
-        let neverPlayed = driver.state.games.filter { $0.lastPlayed == nil }.map(\.title).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        XCTAssertEqual(neverPlayed.count, 2)
-        XCTAssertEqual(driver.state.homeGames.suffix(2).map(\.title), neverPlayed)
+        XCTAssertEqual(driver.state.homeGames.map(\.id), driver.state.games.map(\.id))
         // the tile follows the last game for every limit, and for a library smaller than the limit
         for limit in ConsoleHomeLimit.allCases {
             driver.setHomeLimit(limit)
@@ -561,12 +735,17 @@ import NXModel
         XCTAssertEqual(few.homeGames.count, 2)
         few.focus(few.homeGames[1].id)
         XCTAssertTrue(few.moveFocus(1)); XCTAssertTrue(few.libraryTileFocused)
-        // a game started becomes the first
+        // a game picked on the library page leads the row, within the limit, until another game starts or RB arranges the row
         driver.setHomeLimit(.ten)
-        let last = try XCTUnwrap(driver.state.homeGames.last { $0.status == .ready }).id
-        XCTAssertNotEqual(driver.state.homeGames.first?.id, last)
-        driver.play(last); driver.returnFromGame()
-        XCTAssertEqual(driver.state.homeGames.first?.id, last)
+        let picked = try XCTUnwrap(driver.state.games.last).id
+        driver.openLibrary(); driver.pickFromLibrary(picked)
+        XCTAssertEqual(driver.state.homeGames.first?.id, picked)
+        XCTAssertEqual(driver.state.homeGames.count, 10)
+        driver.play("demo.1"); driver.returnFromGame()
+        XCTAssertEqual(driver.state.homeGames.map(\.id), Array(driver.state.games.prefix(10)).map(\.id), "playing another game ends it")
+        driver.openLibrary(); driver.pickFromLibrary(picked); driver.toggleArranging()
+        XCTAssertEqual(driver.state.homeGames.first?.id, driver.state.games.first?.id, "arranging shows the library's own order")
+        XCTAssertFalse(driver.state.moveFocus(-1), "and does not go round to the tile")
         XCTAssertNil(ConsoleHomeLimit(rawValue: "7"))
         XCTAssertNil(ConsoleHomeLimit.all.count)
     }
@@ -656,9 +835,9 @@ import NXModel
         gamepad.perform(.left); settle()
         gamepad.perform(.left); settle()
         gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.librarySort, .recent)
+        XCTAssertEqual(driver.state.prefs.order, .recent)
         gamepad.perform(.right); gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.librarySort, .name, "left and right move between the chips, A picks the order")
+        XCTAssertEqual(driver.state.prefs.order, .name, "left and right move between the chips, A picks the library's order")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "B leaves the chips, not the page")
         gamepad.perform(.y); settle()
@@ -726,5 +905,21 @@ import NXModel
         XCTAssertEqual(ConsoleGlyphs(family: .nintendo).shoulder("ZR"), .symbol("zr.rectangle.roundedtop"))
         XCTAssertEqual(ConsoleGlyphs(family: .playStation).shoulder("L"), .symbol("l1.rectangle.roundedbottom"))
         XCTAssertEqual(ConsoleGlyphs.neutral.shoulder("R"), .letter("R"))
+    }
+
+    /// A game being built neither starts nor explains on A: its app is still being written (the tile shakes, ConsoleGameRow).
+    @MainActor func testABuildingGameNeitherStartsNorExplains() {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        for (id, status) in [("demo.0", ConsoleGame.Status.ready), ("demo.3", .building)] {   // a rebuild of a ready game, and a first build
+            let i = driver.state.games.firstIndex { $0.id == id }!
+            driver.state.games[i].building = true
+            driver.state.games[i].status = status
+            driver.play(id)
+            XCTAssertNil(driver.state.startingGameID, id)
+            XCTAssertNil(driver.state.presentedSheet, id)
+            driver.state.games[i].building = false
+        }
+        driver.play("demo.0")
+        XCTAssertEqual(driver.state.startingGameID, "demo.0", "once built it starts")
     }
 }

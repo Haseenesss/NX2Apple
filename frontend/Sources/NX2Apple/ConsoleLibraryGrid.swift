@@ -32,7 +32,7 @@ import NXLauncher
     }
     /// The scroll position of a game's cell (its cover and its name), apart from the cover's pad target id.
     static func cellID(_ target: String) -> String { "console.grid.cell." + target }
-    static var firstChip: String { "console.grid.sort." + ConsoleLibrarySort.recent.rawValue }
+    static var firstChip: String { "console.grid.order." + LibraryOrder.recent.rawValue }
 
     /// Four across on a screen as wide as a TV's, two in a narrow window, three otherwise.
     static func columns(width: CGFloat, compact: Bool) -> Int { compact ? 2 : width >= 1600 ? 4 : 3 }
@@ -97,8 +97,14 @@ import NXLauncher
                 .frame(height: compact ? 28 : 32).padding(.horizontal, compact ? 8 : 10)
                 .background(.white.opacity(displayMode ? 0.16 : 0.07), in: Capsule())
                 .accessibilityLabel(t("console.grid.display"))
-            ForEach(ConsoleLibrarySort.allCases, id: \.self) { sort in
-                chip("console.grid.sort." + sort.rawValue, title: t(sort.titleKey), on: state.librarySort == sort) { driver.setLibrarySort(sort) }
+            // the library's order, as the desktop offers it (#937); Custom, arranged with RB on the home row, shows while it is in use
+            ForEach(LibraryOrder.choices, id: \.self) { order in
+                chip("console.grid.order." + order.rawValue, title: t(order.labelKey), on: state.prefs.order == order) { driver.setLibraryOrder(order) }
+            }
+            if state.prefs.order == .custom {
+                Text(t(LibraryOrder.custom.labelKey)).font(.manrope(compact ? 12 : 14, .bold)).foregroundStyle(LauncherPalette.background)
+                    .padding(.horizontal, compact ? 10 : 12).frame(height: compact ? 28 : 32)
+                    .background(LauncherPalette.cream, in: Capsule()).padding(1)
             }
             chip("console.grid.onlyBuilt", symbol: built ? "checkmark.circle.fill" : "circle", title: t(ConsolePref.onlyBuilt.titleKey), on: built) {
                 driver.setPref(.onlyBuilt, on: !built)

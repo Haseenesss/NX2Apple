@@ -179,6 +179,12 @@ import NXLauncher
         showToast(String(format: L10n.string("console.identifyingName", lang), controller.name))
     }
     func openMenu() { state.openMenu() }
+    func toggleArranging() { state.toggleArranging() }
+    func toggleHold() { state.toggleHold() }
+    func moveHeld(_ step: Int) { _ = state.moveHeld(step) }
+    func pickUp(_ gameID: String) { state.pickUp(gameID) }
+    func putDown() { state.putDown() }
+    func setLibraryOrder(_ order: LibraryOrder) { state.prefs.order = order }
     func openLibrary() { state.openLibrary(); loadSaveStates() }
     /// The preview's cloud saves, one of each dot and one game with them off: in step, waiting to send, none yet, off, in turn.
     func loadSaveStates() {
@@ -194,7 +200,6 @@ import NXLauncher
         }
     }
     func pickFromLibrary(_ gameID: String) { state.pickFromLibrary(gameID) }
-    func setLibrarySort(_ sort: ConsoleLibrarySort) { state.librarySort = sort }
     func openSettings() { state.openSettings() }
     func openLanguage() { state.openLanguage() }
     func openAppearance() { state.openAppearance() }

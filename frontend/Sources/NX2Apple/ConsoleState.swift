@@ -7,10 +7,12 @@ import NXLauncher
 /// controller names and a clock value; none of these types inspects a library or a controller device.
 struct ConsoleGame: Identifiable {
     enum Status: Equatable {
-        case ready, needsBuild, needsData, iphoneOnly, broken(String)
+        /// `building`: not playable on this Mac yet, and its build is running on the desktop (its tile greys and shows the progress).
+        case ready, building, needsBuild, needsData, iphoneOnly, broken(String)
         var labelKey: String {
             switch self {
             case .ready: return "console.ready"
+            case .building: return "console.building"
             case .needsBuild: return "console.notBuilt"
             case .needsData: return "console.needsDataBadge"
             case .iphoneOnly: return "console.iphoneOnly"
@@ -20,6 +22,7 @@ struct ConsoleGame: Identifiable {
         var explanationKey: String? {
             switch self {
             case .ready: return nil
+            case .building: return "console.buildingNote"
             case .needsBuild: return "console.needsBuild"
             case .needsData: return "console.needsData"
             case .iphoneOnly: return "console.iphoneOnlyNote"
@@ -41,6 +44,9 @@ struct ConsoleGame: Identifiable {
     /// The part of the cover the card keeps when it crops it (the thumbnail's focus point).
     var artworkFocus = UnitPoint.center
     var status: Status
+    /// This game's build is running on the desktop: also for a game that is ready and being built again (its tile stays in colour
+    /// and shows the progress). The progress itself is the build chip's (ConsoleState.build), read live.
+    var building = false
     /// The exact launcher's model, already decoded and localized by the driver.
     var settings: [LaunchSetting] = []
     var values: [String: String] = [:]
@@ -52,26 +58,12 @@ struct ConsoleGame: Identifiable {
     var cheats: ConsoleCheats?
     var canReset = false
     var save: ConsoleSaveRow?
-    /// When it was last started from the launcher, the desktop or console mode (LibraryGame.lastPlayed); nil for never.
+    /// When it was last played from the launcher (LibraryGame.lastPlayed, which the Recent order goes by); nil for never.
     var lastPlayed: Date?
 
     /// The console's order: the games this Mac can play first, then the rest, each group in the order it came in.
     static func readyFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
         games.filter { $0.status == .ready } + games.filter { $0.status != .ready }
-    }
-
-    /// The most recently played first, then the games never played by name.
-    static func recentFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
-        games.enumerated().sorted { a, b in
-            switch (a.element.lastPlayed, b.element.lastPlayed) {
-            case let (x?, y?) where x != y: return x > y
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default:
-                let order = a.element.title.localizedStandardCompare(b.element.title)
-                return order == .orderedSame ? a.offset < b.offset : order == .orderedAscending
-            }
-        }.map(\.element)
     }
 
     func value(_ setting: LaunchSetting) -> String { values[setting.env] ?? setting.def }
@@ -223,12 +215,6 @@ struct ConsolePadLayout: Equatable {
     var isDefault: Bool { gameTitle == nil ? mode == .standard && sends.isEmpty : sends == baseline }
 }
 
-/// The library page's order (ConsoleState.librarySort).
-enum ConsoleLibrarySort: String, CaseIterable {
-    case recent, name
-    var titleKey: String { "console.grid.sort." + rawValue }
-}
-
 struct ConsoleState {
     /// Every game the library shows (its filter applied): the library page's grid. The home row is `homeGames`.
     var games: [ConsoleGame] = []
@@ -237,14 +223,10 @@ struct ConsoleState {
     var libraryTileFocused = false
     /// The game picked on the library page: it leads the home row until another game is played (its lastPlayed is not changed).
     var frontGameID: String?
-    /// The library page's order: the most recently played first, or by name.
-    var librarySort: ConsoleLibrarySort = .recent
-    /// The library page's grid, in its order.
+    /// The library page's grid: the games in the library's order (Recent, Name, or arranged with RB: `prefs.order`), which the
+    /// driver gives them in; by name again for a driver that leaves them as they came.
     var libraryGames: [ConsoleGame] {
-        switch librarySort {
-        case .recent: return ConsoleGame.recentFirst(games)
-        case .name: return games.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        }
+        prefs.order == .name ? games.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : games
     }
     /// A stack allows an explanation or Controllers to return to the options underneath it.
     var sheets: [ConsoleSheet] = []
@@ -285,6 +267,10 @@ struct ConsoleState {
     var starting: ConsoleStarting = .preparing
     var assigningPlayer: Int?
     var startingGameID: String?
+    /// Arranging the row (RB, #937): A picks the focused game up and puts it down, left and right move the one held. A game moves
+    /// within its group, so the games ready on this Mac stay first. The order is kept as the library's Custom order.
+    var arranging = false
+    var heldGameID: String?
     var exited = false
     var time: Date = Date()
     var presentedSheet: ConsoleSheet? { sheets.last }
@@ -293,10 +279,10 @@ struct ConsoleState {
 
     /// How many games the home row shows (Settings → Appearance), nil for all.
     var homeLimit: Int? { prefs.homeLimit.count }
-    /// The home row: the game picked on the library page, then the most recently played, then the rest by name, the first
-    /// `homeLimit` of them. The library tile follows them whatever their number.
+    /// The home row: the game picked on the library page, then the library's order (#937: Recent, Name, or arranged with RB), the
+    /// first `homeLimit` of them. The library tile follows them whatever their number.
     var homeGames: [ConsoleGame] {
-        var ordered = ConsoleGame.recentFirst(games)
+        var ordered = games
         if let front = frontGameID, let i = ordered.firstIndex(where: { $0.id == front }) { ordered.insert(ordered.remove(at: i), at: 0) }
         return homeLimit.map { Array(ordered.prefix($0)) } ?? ordered
     }
@@ -325,11 +311,11 @@ struct ConsoleState {
     @discardableResult mutating func moveFocus(_ step: Int, repeat isRepeat: Bool = false) -> Bool {
         guard startingGameID == nil, sheets.isEmpty, !exited else { return false }
         let row = homeGames
-        let count = row.count + 1   // the games, then the tile
+        let count = row.count + (arranging ? 0 : 1)   // the games, then the tile (hidden while arranging)
         let index = libraryTileFocused ? row.count : (row.firstIndex { $0.id == focusedGameID } ?? 0)
         var target = index + step
         if target < 0 || target >= count {
-            guard !isRepeat, count > 1 else { return false }
+            guard !isRepeat, !arranging, count > 1 else { return false }   // arranging does not go round
             target = (target % count + count) % count
         }
         if target == row.count { focusLibraryTile() } else { focus(row[target].id) }
@@ -341,8 +327,55 @@ struct ConsoleState {
         games[i].lastPlayed = date
         if frontGameID != nil { frontGameID = nil }
     }
+    mutating func toggleArranging() {
+        guard arranging || (!games.isEmpty && presentedSheet == nil && startingGameID == nil && !exited) else { return }
+        arranging.toggle()
+        heldGameID = nil
+        if arranging { frontGameID = nil; libraryTileFocused = false }   // the row shows the library's own order to arrange
+    }
+    mutating func toggleHold() {
+        guard arranging, let id = focusedGame?.id else { return }
+        heldGameID = heldGameID == id ? nil : id
+    }
+    /// A long press with the mouse: arranging starts if it has not, and that game is focused and picked up.
+    mutating func pickUp(_ id: String) {
+        guard games.contains(where: { $0.id == id }) else { return }
+        if !arranging { toggleArranging() }
+        guard arranging else { return }
+        focus(id)
+        heldGameID = id
+    }
+    /// The mouse let go: the game stays where it is and arranging goes on.
+    mutating func putDown() { heldGameID = nil }
+    /// The places the held game can take: its group (the games ready on this Mac, or the others), which it never leaves.
+    var heldRange: ClosedRange<Int>? {
+        guard let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }) else { return nil }
+        let ready = games[at].status == .ready
+        var lo = at, hi = at
+        while lo > 0, (games[lo - 1].status == .ready) == ready { lo -= 1 }
+        while hi < games.count - 1, (games[hi + 1].status == .ready) == ready { hi += 1 }
+        return lo...hi
+    }
+    /// The first game of the second group, where arranging draws the line between the groups; nil when there is one group.
+    var groupBoundaryID: String? {
+        guard let i = games.firstIndex(where: { $0.status != .ready }), i > 0 else { return nil }
+        return games[i].id
+    }
+    /// Whether the held game can go one place left (-1) or right (+1): not past the row's end, nor out of its group.
+    func canMoveHeld(_ step: Int) -> Bool {
+        guard arranging, let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }), games.indices.contains(at + step) else { return false }
+        return (games[at + step].status == .ready) == (games[at].status == .ready)
+    }
+    /// Moves the held game one place. Returns the row's ids before the move, which the driver keeps the move by, or nil when it cannot move.
+    mutating func moveHeld(_ step: Int) -> [String]? {
+        guard canMoveHeld(step), let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }) else { return nil }
+        let before = games.map(\.id)
+        games.swapAt(at, at + step)
+        return before
+    }
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
+        if game.building { return }   // its app is being written: the tile shakes instead (ConsoleGameRow)
         if game.status == .ready { startingGameID = id; starting = .preparing; sheets = []; libraryTileFocused = false }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }
@@ -437,6 +470,7 @@ struct ConsoleState {
     mutating func back() {
         guard !exited else { return }
         if startingGameID != nil { return } // the driver ends Starting when the game window appears
+        if arranging, sheets.isEmpty { if heldGameID != nil { heldGameID = nil } else { arranging = false }; return }   // B puts the game down, then ends arranging
         if presentedSheet == .mapping, mappingRow != nil { mappingRow = nil; return }   // B in a button's choices goes back to the list
         if presentedSheet == .mapping, mappingChanged { sheets.append(.confirmMapping); return }   // asks before leaving changes
         if presentedSheet == .mapping { mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
@@ -447,7 +481,7 @@ struct ConsoleState {
         }
         else { confirmExit() }   // B on the home screen asks before leaving
     }
-    mutating func exitToDesktop() { exited = true; sheets = []; startingGameID = nil; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil; mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
+    mutating func exitToDesktop() { exited = true; sheets = []; arranging = false; heldGameID = nil; startingGameID = nil; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil; mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
     mutating func returnFromGame() { exited = false; startingGameID = nil; sheets = []; assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil; mappingGameID = nil }
     mutating func setOption(game id: String, setting env: String, value: String) {
         guard !exited, startingGameID == nil, let i = games.firstIndex(where: { $0.id == id }),
@@ -483,7 +517,6 @@ struct ConsoleState {
     func pickFromLibrary(_ gameID: String)
     /// Each built game's cloud save (ConsoleGame.save), for the covers' dots: read when the library page opens and when the library changes.
     func loadSaveStates()
-    func setLibrarySort(_ sort: ConsoleLibrarySort)
     func openSettings()
     func openCloudSaves()
     /// The Settings page's display language list.
@@ -542,6 +575,15 @@ struct ConsoleState {
     func consumePress(controllerID: String, isBack: Bool) -> Bool
     /// The Home button hint's button: opens the system's Home button settings and closes the hint.
     func openHomeButtonSettings()
+    /// Arranging the row (RB): on and off, pick up or put down the focused game, move the one held (ConsoleState.arranging).
+    func toggleArranging()
+    func toggleHold()
+    func moveHeld(_ step: Int)
+    /// The mouse: a long press picks a game up (and starts arranging), letting go puts it down.
+    func pickUp(_ gameID: String)
+    func putDown()
+    /// The row's order from the General page: Recent and Name, and Custom while an arranged order is in use.
+    func setLibraryOrder(_ order: LibraryOrder)
 }
 
 extension ConsoleDriver {
@@ -555,7 +597,6 @@ extension ConsoleDriver {
     func openLibrary() {}
     func pickFromLibrary(_ gameID: String) {}
     func loadSaveStates() {}
-    func setLibrarySort(_ sort: ConsoleLibrarySort) {}
     func openSettings() {}
     func openCloudSaves() {}
     func openLanguage() {}
@@ -579,6 +620,12 @@ extension ConsoleDriver {
     func openGamePad(_ gameID: String) {}
     func consumePress(controllerID: String, isBack: Bool) -> Bool { false }
     func openHomeButtonSettings() { back() }
+    func toggleArranging() {}
+    func toggleHold() {}
+    func moveHeld(_ step: Int) {}
+    func pickUp(_ gameID: String) {}
+    func putDown() {}
+    func setLibraryOrder(_ order: LibraryOrder) {}
 }
 
 /// Shared choice/range/toggle stepping for mouse, d-pad and keyboard. No settings store is touched.

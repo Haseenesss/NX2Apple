@@ -47,6 +47,55 @@ import NXModel
         XCTAssertEqual(LibraryFilter.load(defaults), .built)
     }
 
+    /// #937: the row's order. Recent puts the last played first and the never-played after them by name, Custom is the library's own order.
+    func testLibraryOrderRecentNameAndCustom() {
+        let defaults = TestDefaults.make("nxnative-tests-order")
+        XCTAssertEqual(LibraryOrder.load(defaults), .recent)
+        LibraryOrder.custom.save(defaults)
+        XCTAssertEqual(LibraryOrder.load(defaults), .custom)
+
+        var zelda = LibraryGame(titleID: "Z", name: "Zelda")
+        let mario = LibraryGame(titleID: "M", name: "Mario")
+        var kirby = LibraryGame(titleID: "K", name: "Kirby")
+        let alba = LibraryGame(titleID: "A", name: "Alba")
+        zelda.lastPlayed = Date(timeIntervalSince1970: 100)
+        kirby.lastPlayed = Date(timeIntervalSince1970: 200)
+        let games = [zelda, mario, kirby, alba]
+        XCTAssertEqual(LibraryOrder.recent.arrange(games).map(\.name), ["Kirby", "Zelda", "Alba", "Mario"])
+        XCTAssertEqual(LibraryOrder.name.arrange(games).map(\.name), ["Alba", "Kirby", "Mario", "Zelda"])
+        XCTAssertEqual(LibraryOrder.custom.arrange(games).map(\.name), ["Zelda", "Mario", "Kirby", "Alba"])
+        XCTAssertEqual(LibraryFilter.owned.visibleGames(games, order: .recent).first?.id, kirby.id)
+    }
+
+    /// #937: a game played from the launcher is remembered as the last played, across a restart; moving a card moves it past its
+    /// neighbour in the row on screen, so the games a filter hides keep their places, and stops at the ends.
+    func testLibraryRemembersLastPlayedAndMovesCards() {
+        let file = temporary.appendingPathComponent("library.json")
+        let start = [("A", "Alba"), ("B", "Bayo"), ("C", "Celeste"), ("D", "Dredge")].map { LibraryGame(titleID: $0.0, name: $0.1) }
+        try? JSONEncoder().encode(start).write(to: file)   // a library written before #937: no lastPlayed
+        let library = GameLibrary(file: file, volumes: temporary.path)
+        XCTAssertEqual(library.games.map(\.name), ["Alba", "Bayo", "Celeste", "Dredge"])
+        XCTAssertNil(library.games[0].lastPlayed)
+        let ids = Dictionary(uniqueKeysWithValues: library.games.map { ($0.name, $0.id) })
+        let played = Date(timeIntervalSince1970: 1_000)
+        library.markPlayed(ids["Celeste"]!, at: played)
+        XCTAssertEqual(GameLibrary(file: file, volumes: temporary.path).games.first { $0.name == "Celeste" }?.lastPlayed, played)
+
+        // Custom starts from the row on screen
+        library.adoptOrder(LibraryOrder.recent.arrange(library.games).map(\.id))
+        XCTAssertEqual(library.games.map(\.name), ["Celeste", "Alba", "Bayo", "Dredge"])
+
+        // The row shows only Celeste, Bayo and Dredge (a filter hides Alba): Dredge goes left past Bayo, Alba stays second
+        let shown = [ids["Celeste"]!, ids["Bayo"]!, ids["Dredge"]!]
+        XCTAssertTrue(library.move(ids["Dredge"]!, by: -1, among: shown))
+        XCTAssertEqual(library.games.map(\.name), ["Celeste", "Alba", "Dredge", "Bayo"])
+        XCTAssertTrue(library.move(ids["Celeste"]!, by: 1, among: [ids["Celeste"]!, ids["Dredge"]!, ids["Bayo"]!]))
+        XCTAssertEqual(library.games.map(\.name), ["Alba", "Dredge", "Celeste", "Bayo"])
+        XCTAssertFalse(library.move(ids["Alba"]!, by: -1, among: library.games.map(\.id)))
+        XCTAssertFalse(library.move(ids["Bayo"]!, by: 1, among: library.games.map(\.id)))
+        XCTAssertEqual(GameLibrary(file: file, volumes: temporary.path).games.map(\.name), ["Alba", "Dredge", "Celeste", "Bayo"])
+    }
+
     func testLibraryTitleOrderUsesNumbersAndKeepsSelection() {
         let ten = LibraryGame(titleID: "C", name: "Quest 10")
         let two = LibraryGame(titleID: "B", name: "Quest 2")
@@ -116,8 +165,8 @@ import NXModel
         let built = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp(titleID).path)
         let unbuilt = LibraryGame(titleID: "0100000000010000", name: "Celeste")
         let games = [unbuilt, built]
-        XCTAssertEqual(games.filter(LibraryFilter.owned.includes).map(\.id), [unbuilt.id, built.id])
-        XCTAssertEqual(games.filter(LibraryFilter.built.includes).map(\.id), [built.id])
+        XCTAssertEqual(games.filter { LibraryFilter.owned.includes($0) }.map(\.id), [unbuilt.id, built.id])
+        XCTAssertEqual(games.filter { LibraryFilter.built.includes($0) }.map(\.id), [built.id])
 
         let hidden = LibraryFilter.built.reconcile(games: games, selectedID: unbuilt.id, focused: "card." + unbuilt.id.uuidString)
         XCTAssertEqual(hidden.selectedID, built.id)
@@ -133,6 +182,38 @@ import NXModel
         let none = LibraryFilter.built.reconcile(games: [unbuilt], selectedID: unbuilt.id, focused: nil)
         XCTAssertNil(none.selectedID)
         XCTAssertEqual(LibraryFilter.owned.reconcile(games: games, selectedID: nil, focused: nil).selectedID, unbuilt.id)
+    }
+
+    /// The game being built shows under Built from the start of its build (#937): its card is there, grey, before it has a build,
+    /// and the selection and the focus on it stay. Once the build is over without a build, Built hides it again.
+    func testBuiltFilterShowsTheGameBeingBuilt() throws {
+        let built = LibraryGame(titleID: titleID, name: "Hades", appPath: try makeApp(titleID).path)
+        let unbuilt = LibraryGame(titleID: "0100000000010000", name: "Celeste")
+        let games = [unbuilt, built]
+        XCTAssertTrue(LibraryFilter.built.includes(unbuilt, building: unbuilt.id))
+        XCTAssertFalse(LibraryFilter.built.includes(unbuilt, building: built.id))
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games, order: .name, building: unbuilt.id).map(\.id), [unbuilt.id, built.id])
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games, matching: "hades", building: unbuilt.id).map(\.id), [built.id], "the search still applies")
+
+        let kept = LibraryFilter.built.reconcile(games: games, selectedID: unbuilt.id, focused: "card." + unbuilt.id.uuidString, building: unbuilt.id)
+        XCTAssertEqual(kept.selectedID, unbuilt.id)
+        XCTAssertEqual(kept.focused, "card." + unbuilt.id.uuidString)
+
+        XCTAssertEqual(LibraryFilter.built.visibleGames(games).map(\.id), [built.id])
+    }
+
+    /// The entry the console row and the filter call "being built" is the one rememberInputs made when the build started.
+    func testBuildingIDIsTheEntryTheBuildStarted() {
+        let stores = LauncherStores(defaults: testDefaults); let model = stores.build
+        let library = GameLibrary(file: temporary.appendingPathComponent("building.json"))
+        XCTAssertNil(GameLibrary.buildKey(model), "no base package chosen")
+        model.slots[0].paths = ["/games/Celeste [0100000000010000].nsp"]
+        let id = library.rememberInputs(model)
+        XCTAssertNotNil(id)
+        XCTAssertNil(library.buildingID(model), "no build running")
+        model.running = true
+        defer { model.running = false }
+        XCTAssertEqual(library.buildingID(model), id)
     }
 
     func testReadyRequiresMatchingGameAndCompleteExecutables() throws {
@@ -241,6 +322,23 @@ import NXModel
         let to = ArtworkStore.customDirectory(for: pending.id, in: library.artworkDirectory)
         XCTAssertTrue(FileManager.default.fileExists(atPath: to.appendingPathComponent("mine.jpg").path), "the image goes to the entry that stays")
         XCTAssertFalse(FileManager.default.fileExists(atPath: from.path))
+    }
+
+    /// #937: a build that merges a path-keyed entry into the game's existing one keeps when it was last played (the Recent order).
+    func testBuildOfPathKeyedEntryKeepsWhenItWasLastPlayed() throws {
+        let app = try makeApp(titleID)
+        let file = temporary.appendingPathComponent("library.json")
+        var existing = LibraryGame(titleID: titleID, name: "Hades")
+        existing.appPath = app.path
+        let played = Date(timeIntervalSince1970: 1_000)
+        existing.lastPlayed = played
+        var pending = LibraryGame(titleID: "/games/Hades.nsp", name: "Hades")
+        pending.inputs = ["base": ["/games/Hades.nsp"]]
+        try JSONEncoder().encode([existing, pending]).write(to: file)
+        let library = GameLibrary(file: file)
+        library.recordCompletedApp(path: app.path, for: pending.id)
+        XCTAssertEqual(library.games.count, 1)
+        XCTAssertEqual(library.games[0].lastPlayed, played)
     }
 
     func testRebuildingSameGameKeepsOneEntryAndCustomArtwork() throws {

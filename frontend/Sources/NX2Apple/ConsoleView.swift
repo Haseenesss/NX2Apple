@@ -15,7 +15,6 @@ import NXLauncher
     @State private var languageCode = Lang.saved?.code ?? ""
     @StateObject private var pad = PadFocus()
     @StateObject private var gamepad: LauncherGamepad
-    @State private var tileFrames: [String: CGRect] = [:]
     /// The glyph set follows the input used last: a controller's own buttons, or key caps after the keyboard.
     @State private var glyphs: ConsoleGlyphs
     /// Where the focus was under each open sheet, so closing one puts it back there (the menu button, the game, a menu row).
@@ -66,23 +65,22 @@ import NXLauncher
                     // The question to leave is drawn over what it was asked from, which stays in view but takes no input.
                     let confirming = state.presentedSheet?.isQuestion == true
                     let shown = confirming ? state.sheets.dropLast().last : state.presentedSheet
-                    // a panel opened over a page of the whole screen (a game's options over the library) keeps that page in view under it
-                    let under = shown.flatMap { $0.isFullScreen ? nil : state.sheets.dropLast(confirming ? 2 : 1).last }.flatMap { $0.isFullScreen ? $0 : nil }
-                    if let page = under {
-                        fullPage(page, compact: compact)
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .background(LauncherPalette.background)
-                            .allowsHitTesting(false).accessibilityHidden(true)
-                    }
+                    // A panel opened over a page of its own (a game's options over the library) keeps that page under it, as the one
+                    // view: the page that was shown is the page under the panel, so nothing fades out and in (a flash) at the change.
+                    let under = shown.flatMap { sheet in sheet.isFullScreen ? nil : state.sheets.last { $0.isFullScreen } }
+                    let page = (shown?.isFullScreen == true ? shown : nil) ?? under
                     Group {
-                        if let sheet = shown, sheet.isFullScreen {
-                            // a page of its own over the whole screen, not a panel at the side
-                            fullPage(sheet, compact: compact)
-                                .padScope(sheet.scope, pad)
+                        if let page {
+                            // a page of its own over the whole screen, not a panel at the side; without input while a panel is over it
+                            fullPage(page, compact: compact)
+                                .padScope(page.scope, pad)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                                 .background(LauncherPalette.background)
+                                .allowsHitTesting(under == nil).accessibilityHidden(under != nil)
+                                .id(page.scope)
                                 .transition(.opacity)
-                        } else if let sheet = shown {
+                        }
+                        if let sheet = shown, !sheet.isFullScreen {
                             Color.black.opacity(0.5).ignoresSafeArea().accessibilityHidden(true)
                             // On a notched Mac the console covers the whole screen, housing included: the panel keeps clear of it, no
                             // wider than the room beside the housing and its content starting below it (ConsoleNotch).
@@ -184,9 +182,9 @@ import NXLauncher
                             }
                             .animation(.easeInOut(duration: 0.12), value: heading.id)
                             .padding(.horizontal, inset)
-                            .frame(height: compact ? 175 : 100 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
+                            .frame(height: compact ? 140 : 60 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
                         }
-                        gameRow(size: size, compact: compact, inset: inset)
+                        ConsoleGameRow(driver: driver, lang: lang, size: size, compact: compact, inset: inset, edgeNudge: edgeNudge)
                     }
                     .padding(.top, 24).padding(.bottom, 24)
                     .frame(minHeight: area.size.height, alignment: .bottomLeading)
@@ -196,6 +194,13 @@ import NXLauncher
             if !state.games.isEmpty { hintBar(compact: compact, width: size.width).padding(.horizontal, inset).padding(.bottom, compact ? 20 : 32) }
         }
         .padScope("console", pad)
+        // a click on the empty screen ends arranging, as Done, RB and B do
+        .background { if state.arranging { Color.clear.contentShape(Rectangle()).onTapGesture { driver.toggleArranging() } } }
+        // arranging lifts the title and the row a little (the row takes room above it for the game picked up), and a game picked up
+        // or moved springs into place
+        .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: state.arranging)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: state.heldGameID)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.8), value: state.games.map(\.id))
     }
 
     /// The big title over the row: the focused game's name and version, or on the library tile the library and its count.
@@ -225,72 +230,6 @@ import NXLauncher
         .frame(height: compact ? 40 : 52)
     }
 
-    private func gameRow(size: CGSize, compact: Bool, inset: CGFloat) -> some View {
-        let width: CGFloat = compact ? size.width - inset * 2 - 16 : min(470, size.width * 0.32)
-        return ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
-                    ForEach(state.homeGames) { game in
-                        let selected = state.homeFocusedGame?.id == game.id
-                        Button { driver.focus(game.id); driver.play(game.id) } label: {
-                            ConsoleGameTile(game: game, compact: compact, lang: lang)
-                                .frame(width: width)
-                                .contentShape(RoundedRectangle(cornerRadius: 16))
-                        }
-                        .buttonStyle(.plain)
-                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
-                        .offset(x: selected ? edgeNudge : 0)
-                        .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
-                        .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
-                        .accessibilityHint(t("console.playHint"))
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                        // every tile carries its own 8 pt of room for the ring and the focus scale, and the scroll target is this padded
-                        // cell, so a scroll to the first or last tile never pushes that room out of the clip
-                        .padding(.horizontal, 8)
-                        .id(Self.rowCell(game.id))
-                    }
-                    libraryTile(compact: compact, width: width)
-                }
-                .padding(.vertical, 12)
-            }
-            .coordinateSpace(name: "console.row")
-            .onPreferenceChange(ConsoleTileFramesKey.self) { tileFrames = $0 }
-            .padding(.horizontal, inset - 8)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
-            .onChange(of: homeFocusID) { id in
-                // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
-                // the least that brings it inside, and a new focus replaces the running scroll (held repeats do not queue).
-                guard let id else { return }
-                guard let frame = tileFrames[id] else { proxy.scrollTo(Self.rowCell(id), anchor: .center); return }
-                let rowWidth = size.width - 2 * (inset - 8)
-                let anchor: UnitPoint? = frame.minX < 8 ? .leading : (frame.maxX > rowWidth - 8 ? .trailing : nil)
-                if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.rowCell(id), anchor: anchor) } }
-            }
-            .onAppear { if let id = homeFocusID { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
-        }
-    }
-
-    /// The home row's focused place, by its tile frame key: a game's id, or the library tile's.
-    private var homeFocusID: String? { state.libraryTileFocused ? Self.libraryTileID : state.homeFocusedGame?.id }
-
-    /// The row's last tile: the library, how many games it has and how many are built. A (or down anywhere on the row) opens it.
-    private func libraryTile(compact: Bool, width: CGFloat) -> some View {
-        let selected = state.libraryTileFocused
-        return Button { driver.openLibrary() } label: {
-            ConsoleLibraryTile(title: t("console.menu.library"), count: libraryCount, compact: compact)
-                .frame(width: width)
-                .contentShape(RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-        .padTarget(Self.libraryTileID, scope: "console", radius: 16, activate: { driver.openLibrary() })
-        .offset(x: selected ? edgeNudge : 0)
-        .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [Self.libraryTileID: g.frame(in: .named("console.row"))]) })
-        .accessibilityLabel(t("console.menu.library") + ", " + libraryCount)
-        .accessibilityHint(t("console.library.open"))
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .padding(.horizontal, 8)
-        .id(Self.rowCell(Self.libraryTileID))
-    }
-
     /// A held direction stopped at an end of the home row: the focused tile leans 6 pt that way and back (0.12 s). Not with Reduce Motion.
     private func nudgeAtEdge(_ step: Int) {
         guard !reduceMotion else { return }
@@ -298,16 +237,24 @@ import NXLauncher
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { withAnimation(.easeIn(duration: 0.06)) { edgeNudge = 0 } }
     }
 
-    private static func rowCell(_ id: String) -> String { "console.row." + id }
 
     private func hintBar(compact: Bool, width: CGFloat) -> some View {
         let onTile = state.libraryTileFocused
         let items = {
             Group {
-                hint(.activate, onTile ? "console.library.open" : "console.play", compact: compact)
-                if !onTile { hint(.options, "console.options", compact: compact) }
-                hint(.menu, "console.menu", compact: compact)
-                hint(.back, "console.desktop", compact: compact)
+                if state.arranging {
+                    if state.heldGameID != nil { hint(glyph: .symbol("arrow.left.and.right.circle"), "console.arrange.move", compact: compact) }
+                    hint(.activate, state.heldGameID == nil ? "console.arrange.pickUp" : "console.arrange.putDown", compact: compact)
+                    // the way out for the mouse too: the only hint that is a button
+                    Button { driver.toggleArranging() } label: { hint(.arrange, "console.arrange.done", compact: compact) }
+                        .buttonStyle(.plain).contentShape(Capsule())
+                } else {
+                    hint(.activate, onTile ? "console.library.open" : "console.play", compact: compact)
+                    if !onTile { hint(.options, "console.options", compact: compact) }
+                    hint(.arrange, "console.arrange", compact: compact)
+                    hint(.menu, "console.menu", compact: compact)
+                    hint(.back, "console.desktop", compact: compact)
+                }
             }
         }
         return VStack(spacing: 20) {
@@ -325,9 +272,12 @@ import NXLauncher
     /// A button and what it does, as a hint only: not a control, so the focus never lands on it, and all alike (the focus ring shows
     /// what A plays).
     private func hint(_ role: ConsoleGlyphs.Role, _ key: String, compact: Bool) -> some View {
-        let input: ConsoleInput = switch role { case .back: .back; case .options: .options; case .menu: .menu; default: .activate }
-        let glyph = glyphs.glyph(for: role, on: ConsoleButtons.button(for: input, swapAB: state.menuSwapAB))   // A or B, as the swap has it
-        return HStack(alignment: .center, spacing: 10) { ConsoleGlyphView(glyph: glyph, size: compact ? 20 : 24); Text(t(key)).lineLimit(1).minimumScaleFactor(0.8) }
+        let input: ConsoleInput = switch role { case .back: .back; case .options: .options; case .menu: .menu; case .arrange: .arrange; default: .activate }
+        return hint(glyph: glyphs.glyph(for: role, on: ConsoleButtons.button(for: input, swapAB: state.menuSwapAB)), key, compact: compact)   // A or B, as the swap has it
+    }
+
+    private func hint(glyph: ConsoleGlyphs.Glyph, _ key: String, compact: Bool) -> some View {
+        HStack(alignment: .center, spacing: 10) { ConsoleGlyphView(glyph: glyph, size: compact ? 20 : 24); Text(t(key)).lineLimit(1).minimumScaleFactor(0.8) }
             .font(.manrope(compact ? 15 : 20, .semibold))
             .padding(.horizontal, compact ? 12 : 8).frame(maxWidth: compact ? .infinity : nil, minHeight: 48)
             .foregroundStyle(.white.opacity(0.75))
@@ -732,6 +682,7 @@ import NXLauncher
             }
             return
         }
+        if state.arranging, state.presentedSheet == nil { arrange(input); return }
         if input == .back { driver.back(); return }
         if state.exited { if input == .activate { driver.returnFromGame() }; return }
         guard state.startingGameID == nil else { return }
@@ -761,7 +712,27 @@ import NXLauncher
             pad.focused = ConsoleLibraryGrid<Driver>.gameTarget(id)
         case .displayMode: if state.presentedSheet == .libraryGrid { toggleDisplayMode() }
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
+        case .arrange:
+            guard state.presentedSheet == nil, let id = state.focusedGame?.id else { return }
+            driver.toggleArranging(); pad.focused = "console.game." + id
         case .back: break
+        }
+    }
+
+    /// Arranging the row: A picks the focused game up or puts it down, left and right move the one held (or the focus, with none
+    /// held), B puts it down and then ends arranging, as RB does at once. Up, down, Y and the menu wait until it ends.
+    private func arrange(_ input: ConsoleInput) {
+        pad.show(default: pad.focused)
+        switch input {
+        case .arrange: driver.toggleArranging()
+        case .back: driver.back()
+        case .activate: driver.toggleHold()
+        case .left, .right:
+            let step = input == .left ? -1 : 1
+            if state.heldGameID != nil { driver.moveHeld(step); return }   // the focus stays on the game, which moves
+            var snapshot = state; snapshot.moveFocus(step)
+            if let id = snapshot.focusedGame?.id { driver.focus(id); pad.focused = "console.game." + id }
+        default: break
         }
     }
 }
