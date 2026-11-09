@@ -10,6 +10,10 @@ import ObjectiveC
 /// (`constrainFrameRect(_:to:)`), and on a notched screen that keeps it out of the band even with the menu bar hidden: while filling,
 /// that method returns the frame unchanged for this window (`unconstrain`).
 /// And a window already in the system's full screen was left there: it now leaves it first, and goes back to it on leaving.
+///
+/// Screens can change while filling: a display unplugged or rearranged moves the others' origins. The window then follows the screen
+/// it covers to wherever that screen is now (or covers the main screen if that one is gone), and on leaving, a saved frame no screen
+/// shows any more is centred on the screen the window is on. Before, the window was held at the old frame, off every screen.
 @MainActor enum ConsoleScreenFill {
     private struct Saved {
         let frame: NSRect
@@ -21,6 +25,8 @@ import ObjectiveC
         let wasFullScreen: Bool
     }
     private static var saved: [ObjectIdentifier: Saved] = [:]
+    /// The screen each filling window covers (its display), and that screen's frame, which the window is held at.
+    private static var covered: [ObjectIdentifier: (display: CGDirectDisplayID?, frame: NSRect)] = [:]
     /// While filling, the window is put back over the whole screen whenever something moves or resizes it: SwiftUI sizes the window
     /// for the console's content when it comes in, and with AppKit's constraint off that pushed the window off the screen.
     private static var guards: [ObjectIdentifier: [NSObjectProtocol]] = [:]
@@ -71,24 +77,60 @@ import ObjectiveC
         window.isMovable = false
         for b in buttons { window.standardWindowButton(b)?.isHidden = true }
         titlebar(of: window)?.isHidden = true   // the band at the top takes no clicks, drags or double-clicks (which would zoom the window)
-        let target = screen.frame
-        window.setFrame(target, display: true)
+        let id = ObjectIdentifier(window)
+        covered[id] = (display(of: screen), screen.frame)
+        window.setFrame(screen.frame, display: true)
         let snap: (Notification) -> Void = { [weak window] _ in
             DispatchQueue.main.async {   // after whatever moved it has finished
                 MainActor.assumeIsolated {
-                    guard let window, isFilling(window), window.frame != target else { return }
+                    guard let window, isFilling(window), let target = covered[ObjectIdentifier(window)]?.frame, window.frame != target else { return }
                     window.setFrame(target, display: true)
                 }
             }
         }
+        // a display unplugged or rearranged: follow the covered screen to where it is now
+        let follow: (Notification) -> Void = { [weak window] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let window, isFilling(window), let now = covered[ObjectIdentifier(window)],
+                          let next = refill(display: now.display, screens: NSScreen.screens.map { (display(of: $0), $0.frame) }) else { return }
+                    covered[ObjectIdentifier(window)] = next
+                    if window.frame != next.frame { window.setFrame(next.frame, display: true) }
+                }
+            }
+        }
         let center = NotificationCenter.default
-        guards[ObjectIdentifier(window)] = [center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main, using: snap),
-                                            center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main, using: snap)]
+        guards[id] = [center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main, using: snap),
+                      center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main, using: snap),
+                      center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main, using: follow)]
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { done() }
+    }
+
+    /// The screen a filling window covers after the screens changed: the one it covered (same display), at its frame now, else the
+    /// first screen (the main one, with the menu bar). nil with no screens.
+    nonisolated static func refill(display: CGDirectDisplayID?, screens: [(display: CGDirectDisplayID?, frame: NSRect)])
+        -> (display: CGDirectDisplayID?, frame: NSRect)? {
+        if let display, let same = screens.first(where: { $0.display == display }) { return same }
+        return screens.first
+    }
+
+    /// The frame a window leaving the fill goes back to: the saved one while a screen shows enough of it to take hold of (100 x 50
+    /// points), else that size (no bigger than `visible`) centred in `visible`, the visible frame of the screen the window is on.
+    /// The frame that was off every screen still touched one by a 170 x 2 point sliver at its corner.
+    nonisolated static func restoredFrame(_ saved: NSRect, screens: [NSRect], visible: NSRect) -> NSRect {
+        let shown = { (s: NSRect) in let i = s.intersection(saved); return i.width >= min(100, saved.width) && i.height >= min(50, saved.height) }
+        if screens.contains(where: shown) { return saved }
+        let w = min(saved.width, visible.width), h = min(saved.height, visible.height)
+        return NSRect(x: (visible.midX - w / 2).rounded(), y: (visible.midY - h / 2).rounded(), width: w, height: h)
+    }
+
+    private static func display(of screen: NSScreen) -> CGDirectDisplayID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 
     private static func restore(_ window: NSWindow, _ s: Saved, done: @escaping () -> Void) {
         for token in guards.removeValue(forKey: ObjectIdentifier(window)) ?? [] { NotificationCenter.default.removeObserver(token) }
+        covered.removeValue(forKey: ObjectIdentifier(window))
         NSApp.presentationOptions = s.options
         window.styleMask = s.style
         window.titleVisibility = s.titleVisibility
@@ -96,8 +138,11 @@ import ObjectiveC
         window.isMovable = s.movable
         for b in buttons { window.standardWindowButton(b)?.isHidden = false }
         titlebar(of: window)?.isHidden = false
-        window.setFrame(s.frame, display: true, animate: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + window.animationResizeTime(s.frame)) {
+        // the saved frame is off every screen if the screens changed while filling
+        let screen = window.screen ?? NSScreen.main
+        let frame = screen.map { restoredFrame(s.frame, screens: NSScreen.screens.map(\.frame), visible: $0.visibleFrame) } ?? s.frame
+        window.setFrame(frame, display: true, animate: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + window.animationResizeTime(frame)) {
             reconstrain(window)
             if s.wasFullScreen { ConsoleCoordinator.toggleFullScreen(window, true, done) } else { done() }
         }
