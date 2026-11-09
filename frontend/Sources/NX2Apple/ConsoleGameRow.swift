@@ -62,7 +62,7 @@ import NXLauncher
                             .id(Self.cell(game.id))
                     }
                 }
-                .padding(.top, state.arranging ? (compact ? 52 : 72) : 12).padding(.bottom, 12)   // room for the game picked up
+                .padding(.top, compact ? 52 : 72).padding(.bottom, 12)   // the room for the game picked up, there whether arranging or not: making it on RB moved every card
                 .padding(.horizontal, margin)
                 .background(EnclosingScrollView(row: scroller))   // the AppKit scroll view, moved directly (RowScroller.reveal)
             }
