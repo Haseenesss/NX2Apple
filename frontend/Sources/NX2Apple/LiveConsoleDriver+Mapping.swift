@@ -13,8 +13,10 @@ extension LiveConsoleDriver {
     }
     func openMenu() { state.openMenu() }
     /// The switches are read again first: Settings on the desktop may have changed them since.
-    func openGeneral() { refreshDesktop(); state.openGeneral() }
+    func openLibrary() { refreshDesktop(); state.openLibrary() }
+    func openSettings() { refreshDesktop(); state.openSettings() }
     func openLanguage() { state.openLanguage() }
+    func openAppearance() { refreshDesktop(); state.openAppearance() }
     /// Kept in the launcher's defaults, read again with the layout (refreshPadLayout), so it lasts from one console session to the next.
     static let menuSwapKey = "console.menuSwapAB"
     /// On the mapping page it waits for Save (finishMapping), so the menus keep their buttons while it is open.
@@ -106,7 +108,7 @@ extension LiveConsoleDriver {
             preferences.refresh()
             layout = ConsolePadLayout(mode: .custom, gameTitle: game.name, baseline: globalSends, sends: ControllerMap.pad(preferences.map("DM_PAD_MAP")))
         } else {
-            layout = ConsolePadLayout(mode: controls.padMode, sends: globalSends)
+            layout = ConsolePadLayout(mode: controls.padMode, sends: globalSends, custom: controls.pad)
         }
         if layout != state.padLayout { state.padLayout = layout }
         let swap = UserDefaults.standard.bool(forKey: Self.menuSwapKey)

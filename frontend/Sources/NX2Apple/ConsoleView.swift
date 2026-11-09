@@ -32,7 +32,7 @@ enum ConsoleInput {
     var inputs: AnyPublisher<ConsoleInput, Never> = Empty().eraseToAnyPublisher()
     /// Set by the real launcher: leaving the mode calls it instead of showing the preview's "Back on desktop" screen.
     var onExit: (() -> Void)?
-    /// The General page's language choice: "" follows the system, else a language code (Localizer.choose). Nil: the page shows it only.
+    /// The Settings page's language choice: "" follows the system, else a language code (Localizer.choose). Nil: the page shows it only.
     var chooseLanguage: ((String) -> Void)?
     /// The language picked here, shown checked (Lang.saved, read when the page opens).
     @State private var languageCode = Lang.saved?.code ?? ""
@@ -78,18 +78,29 @@ enum ConsoleInput {
                     // The question to leave is drawn over what it was asked from, which stays in view but takes no input.
                     let confirming = state.presentedSheet?.isQuestion == true
                     let shown = confirming ? state.sheets.dropLast().last : state.presentedSheet
+                    // A panel opened over a page of its own (a game's options over the library) keeps that page under it, as the one
+                    // view: the page that was shown is the page under the panel, so nothing fades out and in (a flash) at the change.
+                    let under = shown.flatMap { sheet in sheet.isFullScreen ? nil : state.sheets.last { $0.isFullScreen } }
+                    let page = (shown?.isFullScreen == true ? shown : nil) ?? under
                     Group {
-                        if let sheet = shown, sheet.isFullScreen {
-                            // a page of its own over the whole screen, not a panel at the side
-                            fullPage(sheet, compact: compact)
-                                .padScope(sheet.scope, pad)
+                        if let page {
+                            // a page of its own over the whole screen, not a panel at the side; without input while a panel is over it
+                            fullPage(page, compact: compact)
+                                .padScope(page.scope, pad)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                                 .background(LauncherPalette.background)
+                                .allowsHitTesting(under == nil).accessibilityHidden(under != nil)
+                                .id(page.scope)
                                 .transition(.opacity)
-                        } else if let sheet = shown {
+                        }
+                        if let sheet = shown, !sheet.isFullScreen {
                             Color.black.opacity(0.5).ignoresSafeArea().accessibilityHidden(true)
+                            // On a notched Mac the console covers the whole screen, housing included: the panel keeps clear of it, no
+                            // wider than the room beside the housing and its content starting below it (ConsoleNotch).
+                            let notch = ConsoleNotch.current(screenWidth: geometry.size.width)
                             sheetContent(sheet, compact: compact)
-                                .frame(width: compact ? geometry.size.width : min(700, max(520, geometry.size.width * 0.46)))
+                                .padding(.top, notch.inset)
+                                .frame(width: compact ? geometry.size.width : min(700, max(520, min(geometry.size.width * 0.46, notch.panelWidth ?? .infinity))))
                                 .frame(maxHeight: .infinity)
                                 .background(LauncherPalette.background)
                                 .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.10)).frame(width: 1) }
@@ -106,7 +117,8 @@ enum ConsoleInput {
                 }
             }
             .overlay(alignment: .top) {
-                if let toast = state.toast { ConsoleToastView(toast: toast).id(toast.id).transition(.opacity) }
+                // below the top bar, so it never covers a controller chip (and on a notched screen, never sits under the housing)
+                if let toast = state.toast { ConsoleToastView(toast: toast).id(toast.id).transition(.opacity).padding(.top, compact ? 56 : 88) }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
@@ -198,13 +210,13 @@ enum ConsoleInput {
     private func topBar(compact: Bool) -> some View {
         HStack(spacing: compact ? 12 : 20) {
             if let build = state.build { ConsoleBuildChip(build: build, lang: lang, compact: compact) }
-            ConsoleControllerChips(controllers: state.controllers, merged: state.padMerge, lang: lang, compact: compact) { driver.openControllers() }
+            ConsoleControllerChips(controllers: state.controllers, merged: state.padMerge, lang: lang, compact: compact, batteryStyle: state.prefs.batteryStyle) { driver.openControllers() }
             Text(state.time, style: .time).font(.manrope(compact ? 17 : 22, .medium)).monospacedDigit()
                 .foregroundStyle(.white.opacity(0.65)).fixedSize()
             Button { driver.openMenu() } label: {
                 Image(systemName: "line.3.horizontal").font(.system(size: compact ? 16 : 20, weight: .semibold))
                     .frame(width: compact ? 40 : 52, height: compact ? 40 : 52)
-                    .background(.white.opacity(0.075), in: Circle()).contentShape(Circle())
+                    .consoleGlass(Circle()).contentShape(Circle())
             }
             .buttonStyle(.plain).accessibilityLabel(t("console.menu"))
             .padTarget("console.menuButton", scope: "console", radius: 26, activate: { driver.openMenu() })
@@ -278,8 +290,10 @@ enum ConsoleInput {
                 if let game = state.games.first(where: { $0.id == id }) { explanation(game, compact: compact) }
             case .homeButtonHint: homeButtonHint(compact: compact)
             case .menu: menu(compact: compact)
-            case .general: general(compact: compact)
+            case .library: library(compact: compact)
+            case .settings: settings(compact: compact)
             case .language: language(compact: compact)
+            case .appearance: appearance(compact: compact)
             case let .advanced(id):
                 if let game = state.games.first(where: { $0.id == id }) { advanced(game, compact: compact) }
             case .mapping, .gamePad, .cloudSaves, .confirmExit, .confirmMapping, .confirmReset, .confirmUpdate: EmptyView()   // drawn over the whole screen (fullPage, question)
@@ -297,10 +311,11 @@ enum ConsoleInput {
                     ConsoleGameOptionsList(driver: driver, game: game, lang: lang, compact: compact, editing: $editingOption)
                         .padding(.horizontal, compact ? 24 : 40).padding(.vertical, 8)
                 }
+                .consoleScrollFade()
                 .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
             }
             VStack(alignment: .leading, spacing: 18) {
-                Text(t("console.adjustHintSlider")).font(.manrope(compact ? 14 : 17)).foregroundStyle(.secondary)
+                Text(t(adjustHint(game.basicSettings))).font(.manrope(compact ? 14 : 17)).foregroundStyle(.secondary)
                 primaryButton(t("console.play"), id: "console.options.play", scope: "console.options") { driver.play(game.id) }
             }
             .padding(compact ? 24 : 40)
@@ -317,10 +332,16 @@ enum ConsoleInput {
                     ConsoleAdvancedList(driver: driver, game: game, lang: lang, compact: compact, editing: $editingOption)
                         .padding(.horizontal, compact ? 24 : 40).padding(.vertical, 8)
                 }
+                .consoleScrollFade()
                 .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
             }
-            Text(t("console.adjustHintSlider")).font(.manrope(compact ? 14 : 17)).foregroundStyle(.secondary).padding(compact ? 24 : 40)
+            Text(t(adjustHint(game.advancedSettings))).font(.manrope(compact ? 14 : 17)).foregroundStyle(.secondary).padding(compact ? 24 : 40)
         }
+    }
+
+    /// The hint under a list of options: the slider's two-step way only where there is a slider.
+    private func adjustHint(_ settings: [LaunchSetting]) -> String {
+        settings.contains { $0.kind == "range" } ? "console.adjustHintSlider" : "console.adjustHint"
     }
 
     /// The question on top: leaving console mode, saving the button mapping's changes, resetting a game's options, the app's update.
@@ -369,15 +390,16 @@ enum ConsoleInput {
         }
     }
 
-    /// The console's own menu: General (the language, the cloud saves), Controllers, the button mapping, and the way back to the desktop.
+    /// The console's own menu, as the desktop's Settings groups things: Library (the library's switch, the cloud saves), Controllers
+    /// (players, the button mapping, the ways into console mode), Settings (the language, the app's update), and the way back to the desktop.
     private func menu(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            menuRow("console.menu.general", symbol: "gearshape", title: t("console.menu.general"), note: t("console.menu.generalNote"),
-                    compact: compact) { driver.openGeneral() }
+            menuRow("console.menu.library", symbol: "square.grid.2x2", title: t("console.menu.library"), note: t("console.menu.libraryNote"),
+                    compact: compact) { driver.openLibrary() }
             menuRow("console.menu.controllers", symbol: "gamecontroller", title: t("console.controllers"), note: t("console.menu.controllersNote"),
                     compact: compact) { driver.openControllers() }
-            menuRow("console.menu.mapping", symbol: "arrow.left.arrow.right", title: t("console.mapping"),
-                    note: t("console.menu.mappingNote"), value: t("controls.mode." + state.padLayout.mode.rawValue), compact: compact) { driver.openMapping() }
+            menuRow("console.menu.settings", symbol: "gearshape", title: t("console.menu.settings"), note: t("console.menu.settingsNote"),
+                    compact: compact) { driver.openSettings() }
             Spacer(minLength: 24)
             menuRow("console.menu.exit", symbol: "rectangle.portrait.and.arrow.right", title: t("console.menu.exit"), note: t("console.menu.exitNote"),
                     compact: compact) { driver.confirmExit() }
@@ -393,13 +415,38 @@ enum ConsoleInput {
     /// "Follow the system" by its name in the launcher's language, every other language by its own name (as Settings lists them).
     private func languageName(_ code: String) -> String { code.isEmpty ? t("settings.language.system") : (Lang.find(code)?.name ?? code) }
 
-    /// The General page (ConsoleGeneralList): the language, the cloud saves, the app's update and the launcher's switches.
-    private func general(compact: Bool) -> some View {
+    /// The Library page (ConsoleLibraryList): the library's switch and the cloud saves.
+    private func library(compact: Bool) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                ConsoleGeneralList(driver: driver, lang: lang, compact: compact, languageName: languageName(languageCode))
+                ConsoleLibraryList(driver: driver, lang: lang, compact: compact)
                     .padding(.horizontal, compact ? 24 : 40).padding(.bottom, compact ? 24 : 40)
             }
+            .consoleScrollFade()
+            .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
+        }
+    }
+
+    /// The Settings page (ConsoleSettingsList): the language, the app's update and the launcher after a game.
+    private func settings(compact: Bool) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                ConsoleSettingsList(driver: driver, lang: lang, compact: compact, languageName: languageName(languageCode))
+                    .padding(.horizontal, compact ? 24 : 40).padding(.bottom, compact ? 24 : 40)
+            }
+            .consoleScrollFade()
+            .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
+        }
+    }
+
+    /// The Appearance page (ConsoleAppearanceList): how the chips show the battery, and what else of the look becomes a choice.
+    private func appearance(compact: Bool) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                ConsoleAppearanceList(driver: driver, lang: lang, compact: compact)
+                    .padding(.horizontal, compact ? 24 : 40).padding(.bottom, compact ? 24 : 40)
+            }
+            .consoleScrollFade()
             .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
         }
     }
@@ -432,6 +479,7 @@ enum ConsoleInput {
                 }
                 .padding(.horizontal, compact ? 24 : 40).padding(.bottom, compact ? 24 : 40)
             }
+            .consoleScrollFade()
             .onChange(of: pad.focused) { id in
                 guard let id, id.hasPrefix("console.language.") else { return }
                 withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) }
@@ -544,7 +592,9 @@ enum ConsoleInput {
         case .menu: return "console.menu"
         case .mapping: return state.mappingGameID == nil ? "console.mapping" : "console.mapping.game"
         case .gamePad: return "console.gamePad"
-        case .general: return "console.menu.general"
+        case .library: return "console.menu.library"
+        case .settings: return "console.menu.settings"
+        case .appearance: return "console.settings.appearance"
         case .language: return "console.language.title"
         case .cloudSaves: return "console.saves.title"
         case .confirmExit: return "console.exit.title"
@@ -572,9 +622,11 @@ enum ConsoleInput {
         case .controllers: pad.focused = "console.player.\(state.assigningPlayer ?? 1)"
         case .explanation: pad.focused = "console.explanation.desktop"
         case .homeButtonHint: pad.focused = "console.homeHint.open"
-        case .menu: pad.focused = "console.menu.general"
-        case .cloudSaves: pad.focused = state.saveRows.first.map { "console.saves.row." + $0.id } ?? "console.saves.close"
-        case .general: pad.focused = "console.general.language"
+        case .menu: pad.focused = "console.menu.library"
+        case .cloudSaves: pad.focused = ConsoleCloudSaves.sorted(state.saveRows).first.map { "console.saves.row." + $0.id } ?? "console.saves.close"   // the first row as the page sorts them
+        case .library: pad.focused = ConsolePref.onLibrary.first.map { "console.pref." + $0.rawValue } ?? "console.library.saves"
+        case .settings: pad.focused = "console.settings.language"
+        case .appearance: pad.focused = "console.appearance.battery." + state.prefs.batteryStyle.rawValue
         case .language: pad.focused = "console.language." + (languageCode.isEmpty ? "system" : languageCode)
         case .confirmExit: pad.focused = "console.confirmExit.leave"
         case .confirmMapping: pad.focused = "console.confirmMapping.save"

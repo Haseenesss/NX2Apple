@@ -1,7 +1,7 @@
 import Foundation
 
 /// What console mode brings over from the desktop launcher, as plain values the driver fills: a game's mods and cheats (switched on
-/// and off here, put in place on the desktop), the launcher's own switches on the General page, the app's update, and a build the
+/// and off here, put in place on the desktop), the launcher's own switches on the menu's pages, the app's update, and a build the
 /// desktop is running. Nothing here builds, picks a folder or reads a file: the driver does (LiveConsoleDriver+Desktop).
 
 /// A mod in the game's mods folder (GameMod). One that changes the game's code (exefs) cannot be used and shows why.
@@ -30,7 +30,8 @@ struct ConsoleCheats: Equatable {
     var note: String?
 }
 
-/// The launcher's own switches that console mode shows on its General page (the same defaults the desktop's Settings uses).
+/// The launcher's own switches console mode shows, each on the menu page it belongs to, as the desktop's Settings groups them (and
+/// the same defaults): the library's filter on Library, the ways into console mode on Controllers, the launcher after a game on Settings.
 enum ConsolePref: String, CaseIterable {
     /// ConsolePrompt.startKey: the launcher opens in console mode.
     case startInConsole
@@ -42,9 +43,13 @@ enum ConsolePref: String, CaseIterable {
     case onlyBuilt
     var titleKey: String { "console.pref." + rawValue }
     var noteKey: String { "console.pref." + rawValue + "Note" }
+    /// The switches of each page, in their order.
+    static let onLibrary: [ConsolePref] = [.onlyBuilt]
+    static let onControllers: [ConsolePref] = [.startInConsole, .promptOnController]
+    static let onSettings: [ConsolePref] = [.returnAfterPlay]
 }
 
-/// Where the app's own update stands (AppUpdateStore), as the General page's row says it and what A does there.
+/// Where the app's own update stands (AppUpdateStore), as the Settings page's row says it and what A does there.
 enum ConsoleAppUpdate: Equatable {
     /// Nothing known yet, or the last check found nothing newer: A checks.
     case upToDate
@@ -62,8 +67,20 @@ enum ConsoleAppUpdate: Equatable {
     case failed(tag: String, reason: String)
 }
 
+/// How the top bar's controller chips show the battery: the icon and the percentage (the default), one of them, or nothing.
+/// Settings → Appearance; kept in the defaults, read again with the other switches (LiveConsoleDriver.refreshDesktop).
+enum ConsoleBatteryStyle: String, CaseIterable {
+    case both, icon, percent, hidden
+    static let defaultsKey = "consoleBatteryStyle"
+    static var saved: ConsoleBatteryStyle { UserDefaults.standard.string(forKey: defaultsKey).flatMap(ConsoleBatteryStyle.init(rawValue:)) ?? .both }
+    var titleKey: String { "console.battery.style." + rawValue }
+    var showsIcon: Bool { self == .both || self == .icon }
+    var showsPercent: Bool { self == .both || self == .percent }
+}
+
 struct ConsolePrefs: Equatable {
     var values: [ConsolePref: Bool] = [:]
+    var batteryStyle: ConsoleBatteryStyle = .both
     var appVersion = ""
     var update: ConsoleAppUpdate = .upToDate
     /// What the update store says now (downloading, ready, why an install failed), shown under the version.

@@ -136,6 +136,7 @@ import NXLauncher
         loadDemoDetails(gameID)
     }
     func setPref(_ pref: ConsolePref, on: Bool) { state.prefs.values[pref] = on }
+    func setBatteryStyle(_ style: ConsoleBatteryStyle) { state.prefs.batteryStyle = style }
     func appUpdateAction() {
         switch state.prefs.update {
         case .available, .ready: state.push(.confirmUpdate)
@@ -177,8 +178,10 @@ import NXLauncher
     func pickUp(_ gameID: String) { state.pickUp(gameID) }
     func putDown() { state.putDown() }
     func setLibraryOrder(_ order: LibraryOrder) { state.prefs.order = order }
-    func openGeneral() { state.openGeneral() }
+    func openLibrary() { state.openLibrary() }
+    func openSettings() { state.openSettings() }
     func openLanguage() { state.openLanguage() }
+    func openAppearance() { state.openAppearance() }
     func setMenuSwapAB(_ on: Bool) {
         if state.mappingOrigin != nil { state.pendingMenuSwapAB = on } else { state.menuSwapAB = on }
     }
@@ -212,6 +215,7 @@ import NXLauncher
         guard state.presentedSheet != .mapping else { return }
         state.openMapping()
         undoCustomPad = customPad
+        state.padLayout.custom = customPad
         state.beginMappingEdit(undo: ConsoleMappingUndo(mode: state.padLayout.mode, pad: customPad))
     }
     /// The preview's own mapping per game, a copy of all games' until it is changed.
@@ -251,10 +255,11 @@ import NXLauncher
         if state.padLayout.mode != .custom { customPad = state.padLayout.sends; state.padLayout.mode = .custom }
         customPad[button] = output == button ? nil : output
         state.padLayout.sends = customPad
+        state.padLayout.custom = customPad
     }
     func resetPadMapping() {
         if let id = state.mappingGameID { gamePads[id] = nil; state.padLayout.sends = state.padLayout.baseline; return }
-        customPad = [:]; state.padLayout = ConsolePadLayout()
+        customPad = [:]; state.padLayout = ConsolePadLayout()   // custom empty too
     }
     /// A controller going away, simulated by tests or a preview coordinator (the console offers no Disconnect: macOS has no way to drop one).
     func disconnect(controllerID: String) {
