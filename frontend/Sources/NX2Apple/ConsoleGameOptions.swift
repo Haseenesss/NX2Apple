@@ -312,6 +312,11 @@ struct ConsoleSwitchRow: View {
                              choices: ConsoleBatteryStyle.allCases.map { ($0.rawValue, t($0.titleKey)) }, chosen: prefs.batteryStyle.rawValue, compact: compact) { raw in
                 if let style = ConsoleBatteryStyle(rawValue: raw) { driver.setBatteryStyle(style) }
             }
+            ConsoleChoiceRow(id: "console.settings.homeLimit", scope: scope, title: t("console.pref.homeLimit"), note: t("console.pref.homeLimitNote"),
+                             choices: ConsoleHomeLimit.allCases.map { ($0.rawValue, $0.count.map(String.init) ?? t("console.pref.homeLimit.all")) },
+                             chosen: prefs.homeLimit.rawValue, compact: compact) { raw in
+                if let limit = ConsoleHomeLimit(rawValue: raw) { driver.setHomeLimit(limit) }
+            }
         }
     }
 

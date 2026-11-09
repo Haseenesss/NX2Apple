@@ -28,6 +28,9 @@ struct LibraryGame: Codable, Identifiable, Equatable {
     var installedDevice = ""
     /// The engine's commit (engine/ HEAD: the pin plus the series) the last finished build used (ToolsAge); empty for a build from before it was recorded.
     var toolsCommit = ""
+    /// When the launcher last started its Mac app (the desktop's Play or console mode); nil for never. Console mode's home row
+    /// shows the most recent first.
+    var lastPlayed: Date?
 
     /// An empty path means there is no Mac build. It is not read, because URL(fileURLWithPath:) would make it the current folder.
     var isReady: Bool {
@@ -81,6 +84,7 @@ extension LibraryGame {
         iosAppPath = try c.decodeIfPresent(String.self, forKey: .iosAppPath) ?? ""
         installedDevice = try c.decodeIfPresent(String.self, forKey: .installedDevice) ?? ""
         toolsCommit = try c.decodeIfPresent(String.self, forKey: .toolsCommit) ?? ""
+        lastPlayed = try? c.decodeIfPresent(Date.self, forKey: .lastPlayed)
     }
 }
 
@@ -554,6 +558,13 @@ final class GameLibrary: ObservableObject {
         upsert(game)
         selectedID = game.id
         return game.id
+    }
+
+    /// A game's Mac app was opened: kept in library.json as its lastPlayed.
+    func recordPlayed(_ id: UUID, at date: Date = Date()) {
+        guard var game = games.first(where: { $0.id == id }) else { return }
+        game.lastPlayed = date
+        upsert(game)
     }
 
     func recordCompletedApp(path: String, commit: String = "", for id: UUID) {

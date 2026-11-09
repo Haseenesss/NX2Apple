@@ -79,7 +79,7 @@ struct ConsoleConnectionPrompt: View {
         }
         .padScope("console.entry", pad)
         .environment(\.padRingStyle, .hug)
-        .background(ConsoleKeyboardInput { input in
+        .background(ConsoleKeyboardInput { input, _ in
             pad.show(default: "console.entry.enter")
             switch input {
             case .back: dismissPrompt()

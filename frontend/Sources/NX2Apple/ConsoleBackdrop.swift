@@ -5,10 +5,12 @@ import NXLauncher
 /// fading out towards the left and the bottom; under it the same art blurred and dimmed across the whole screen, and a soft, darker
 /// blur over the bottom left, where the title, the row and the hints are, so nothing in the art competes with them. Starting: the
 /// cover fills the window, soft and darkened, the Starting text in the middle.
+/// The library tile focused (`mosaic`, the home row's games): their covers side by side, blurred and dark, behind the library's title.
 struct ConsoleBackdrop: View {
     let game: ConsoleGame?
     let starting: Bool
     let size: CGSize
+    var mosaic: [ConsoleGame] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let bg = LauncherPalette.background
 
@@ -25,12 +27,45 @@ struct ConsoleBackdrop: View {
                     else { home(game) }
                 }
                 .id(game.id).transition(.opacity)
+            } else if !mosaic.isEmpty {
+                mosaicView.id("mosaic").transition(.opacity)
             }
         }
         .frame(width: size.width, height: size.height)
-        .animation(.easeInOut(duration: reduceMotion ? 0.01 : 0.38), value: game?.id)   // the art cross-fades, slowly and softly
+        .animation(.easeInOut(duration: reduceMotion ? 0.01 : 0.38), value: game?.id ?? (mosaic.isEmpty ? "" : "mosaic"))   // the art cross-fades, slowly and softly
         .animation(.easeInOut(duration: reduceMotion ? 0.01 : 0.25), value: game?.hero != nil)   // the large image replaces the cover
         .clipped().ignoresSafeArea().accessibilityHidden(true)
+    }
+
+    /// The four most recent covers in a 2 × 2 grid over the top right, as the sharp art sits for a game, dimmed and softly blurred.
+    private var mosaicView: some View {
+        let covers = Array(mosaic.prefix(4))
+        let width = size.width * Self.artWidth, height = size.height * Self.artHeight
+        return ZStack(alignment: .topTrailing) {
+            Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+                ForEach(0..<2, id: \.self) { row in
+                    GridRow {
+                        ForEach(0..<2, id: \.self) { column in
+                            let i = row * 2 + column
+                            if i < covers.count { ConsoleArtwork(image: covers[i].artwork, title: covers[i].title, focus: covers[i].artworkFocus) }
+                            else { LauncherPalette.surface }
+                        }
+                    }
+                }
+            }
+            .frame(width: width, height: height).clipped()
+            .blur(radius: 6).opacity(0.5)
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black.opacity(0.7), location: 0.28),
+                                         .init(color: .black, location: 0.5)], startPoint: .leading, endPoint: .trailing))
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.55),
+                                         .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+            RadialGradient(stops: [.init(color: bg.opacity(0.92), location: 0), .init(color: bg.opacity(0.6), location: 0.45),
+                                   .init(color: bg.opacity(0), location: 1)],
+                           center: .bottomLeading, startRadius: 0, endRadius: max(size.width, size.height) * 0.85)
+            LinearGradient(stops: [.init(color: bg.opacity(0), location: 0.6), .init(color: bg.opacity(0.85), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+        }
+        .frame(width: size.width, height: size.height)
     }
 
     private func image(_ game: ConsoleGame) -> NSImage? { game.hero ?? game.artwork }

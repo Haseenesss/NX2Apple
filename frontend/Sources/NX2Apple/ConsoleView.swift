@@ -45,6 +45,10 @@ enum ConsoleInput {
     @State private var sheetDepth = 0
     /// The slider A picked: only it takes left and right, until A or B lets it go or the focus moves on.
     @State private var editingOption: String?
+    /// The focused home tile's nudge towards the end of the row a held direction stopped at (6 pt, then back).
+    @State private var edgeNudge: CGFloat = 0
+    /// The home row's last tile, the way to the library page.
+    static var libraryTileID: String { "console.library.tile" }
 
     /// `gamepad` is the one the root view owns (the controller has a single handler, so two would fight); without one the view makes its own.
     init(driver: Driver, lang: Lang = .initial(), inputs: AnyPublisher<ConsoleInput, Never> = Empty().eraseToAnyPublisher(), gamepad: LauncherGamepad? = nil, glyphs: ConsoleGlyphs? = nil, onExit: (() -> Void)? = nil, chooseLanguage: ((String) -> Void)? = nil) {
@@ -119,19 +123,20 @@ enum ConsoleInput {
         .preferredColorScheme(.dark)
         .environmentObject(pad)
         .environment(\.padRingStyle, .hug)
-        .background(ConsoleKeyboardInput(perform: { input in glyphs = .keyboard; handle(input) }).frame(width: 0, height: 0))
-        .onReceive(inputs, perform: handle)
+        .background(ConsoleKeyboardInput(perform: { input, isRepeat in glyphs = .keyboard; handle(input, isRepeat: isRepeat) }).frame(width: 0, height: 0))
+        .onReceive(inputs) { handle($0) }
         .onChange(of: scope) { _ in editingOption = nil; resetFocus() }
         .onChange(of: state.exited) { exited in if exited, let onExit { onExit() } else { resetFocus() } }
         // the buttons by their printed letters (ConsoleButtons), the swap read at each press so changing it here applies at once
         .onAppear { gamepad.capture = { [driver] id, action in
                 driver.consumePress(controllerID: id, isBack: ConsoleButtons.input(action, swapAB: driver.state.menuSwapAB) == .back) }
             gamepad.perform = { [self] action in
-                if let input = ConsoleButtons.input(action, swapAB: driver.state.menuSwapAB) { glyphs = .current(); handle(input) } }
+                if let input = ConsoleButtons.input(action, swapAB: driver.state.menuSwapAB) { glyphs = .current(); handle(input, isRepeat: gamepad.isRepeating) } }
             resetFocus() }
         .onDisappear { gamepad.perform = { _ in }; gamepad.capture = nil }
         .onChange(of: pad.focused) { id in
             if let id, id.hasPrefix("console.game.") { driver.focus(String(id.dropFirst("console.game.".count))) }
+            else if id == Self.libraryTileID, !state.libraryTileFocused { driver.focusLibraryTile() }
             if editingOption != id { editingOption = nil }
         }
         .animation(.easeOut(duration: 0.18), value: state.presentedSheet)
@@ -140,7 +145,8 @@ enum ConsoleInput {
     }
 
     private func backdrop(size: CGSize) -> some View {
-        ConsoleBackdrop(game: state.startingGame ?? state.focusedGame, starting: state.startingGame != nil, size: size)
+        ConsoleBackdrop(game: state.startingGame ?? state.homeFocusedGame, starting: state.startingGame != nil, size: size,
+                        mosaic: state.libraryTileFocused && state.startingGame == nil ? state.homeGames : [])
     }
 
     private func home(size: CGSize, compact: Bool) -> some View {
@@ -155,25 +161,25 @@ enum ConsoleInput {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: compact || size.height < 900 ? 24 : 32) {
                         Spacer(minLength: 0)
-                        if let game = state.focusedGame {
+                        if let heading = homeHeading {
                             // A fixed-height slot: the old and the new title overlap and cross-fade in place (0.15 s), so nothing slides
-                            // and the row below never moves, whatever the title's length.
+                            // and the row below never moves, whatever the title's length. The library tile shows the library and its count.
                             ZStack(alignment: .bottomLeading) {
                             VStack(alignment: .leading, spacing: compact ? 14 : 20) {
                                 Text(t("console.library")).font(.manrope(compact ? 14 : 18, .semibold))
                                     .tracking(2).foregroundStyle(LauncherPalette.cream.opacity(0.75))
-                                Text(game.title).font(.manrope(compact ? 36 : min(64, size.width / 24), .bold))
+                                Text(heading.title).font(.manrope(compact ? 36 : min(64, size.width / 24), .bold))
                                     .tracking(-1.6).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                                     .shadow(color: .black.opacity(0.45), radius: 12)
                                     .accessibilityAddTraits(.isHeader)
-                                if !game.version.isEmpty {
-                                    Text(String(format: t("console.version"), game.version)).monospacedDigit().lineLimit(1)
+                                if !heading.detail.isEmpty {
+                                    Text(heading.detail).monospacedDigit().lineLimit(1)
                                         .font(.manrope(compact ? 14 : 18)).foregroundStyle(.white.opacity(0.6))
                                 }
                             }
-                            .id(game.id).transition(.opacity)
+                            .id(heading.id).transition(.opacity)
                             }
-                            .animation(.easeInOut(duration: 0.12), value: game.id)
+                            .animation(.easeInOut(duration: 0.12), value: heading.id)
                             .padding(.horizontal, inset)
                             .frame(height: compact ? 175 : 100 + 2.4 * min(64, size.width / 24), alignment: .bottomLeading)
                         }
@@ -188,6 +194,14 @@ enum ConsoleInput {
         }
         .padScope("console", pad)
     }
+
+    /// The big title over the row: the focused game's name and version, or on the library tile the library and its count.
+    private var homeHeading: (id: String, title: String, detail: String)? {
+        if state.libraryTileFocused { return (Self.libraryTileID, t("console.menu.library"), libraryCount) }
+        guard let game = state.homeFocusedGame else { return nil }
+        return (game.id, game.title, game.version.isEmpty ? "" : String(format: t("console.version"), game.version))
+    }
+    private var libraryCount: String { String(format: t("console.library.count"), state.games.count, state.builtCount) }
 
     /// One fixed-height status row: the controller chips (scrolling sideways inside their own group) to the left of the clock.
     /// Its height never changes, so a controller arriving or leaving moves nothing below it.
@@ -213,8 +227,8 @@ enum ConsoleInput {
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
-                    ForEach(state.games) { game in
-                        let selected = state.focusedGame?.id == game.id
+                    ForEach(state.homeGames) { game in
+                        let selected = state.homeFocusedGame?.id == game.id
                         Button { driver.focus(game.id); driver.play(game.id) } label: {
                             ConsoleGameTile(game: game, compact: compact, lang: lang)
                                 .frame(width: width)
@@ -222,6 +236,7 @@ enum ConsoleInput {
                         }
                         .buttonStyle(.plain)
                         .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
+                        .offset(x: selected ? edgeNudge : 0)
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
                         .accessibilityLabel(game.title + ", " + t(game.status.labelKey))
                         .accessibilityHint(t("console.playHint"))
@@ -231,13 +246,14 @@ enum ConsoleInput {
                         .padding(.horizontal, 8)
                         .id(Self.rowCell(game.id))
                     }
+                    libraryTile(compact: compact, width: width)
                 }
                 .padding(.vertical, 12)
             }
             .coordinateSpace(name: "console.row")
             .onPreferenceChange(ConsoleTileFramesKey.self) { tileFrames = $0 }
             .padding(.horizontal, inset - 8)   // the scroll area is the page margin, so tiles clip there and the title lines up with the first tile
-            .onChange(of: state.focusedGame?.id) { id in
+            .onChange(of: homeFocusID) { id in
                 // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
                 // the least that brings it inside, and a new focus replaces the running scroll (held repeats do not queue).
                 guard let id else { return }
@@ -246,17 +262,47 @@ enum ConsoleInput {
                 let anchor: UnitPoint? = frame.minX < 8 ? .leading : (frame.maxX > rowWidth - 8 ? .trailing : nil)
                 if let anchor { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.2)) { proxy.scrollTo(Self.rowCell(id), anchor: anchor) } }
             }
-            .onAppear { if let id = state.focusedGame?.id { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
+            .onAppear { if let id = homeFocusID { proxy.scrollTo(Self.rowCell(id), anchor: .center) } }
         }
+    }
+
+    /// The home row's focused place, by its tile frame key: a game's id, or the library tile's.
+    private var homeFocusID: String? { state.libraryTileFocused ? Self.libraryTileID : state.homeFocusedGame?.id }
+
+    /// The row's last tile: the library, how many games it has and how many are built. A (or down anywhere on the row) opens it.
+    private func libraryTile(compact: Bool, width: CGFloat) -> some View {
+        let selected = state.libraryTileFocused
+        return Button { driver.openLibrary() } label: {
+            ConsoleLibraryTile(title: t("console.menu.library"), count: libraryCount, compact: compact)
+                .frame(width: width)
+                .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .padTarget(Self.libraryTileID, scope: "console", radius: 16, activate: { driver.openLibrary() })
+        .offset(x: selected ? edgeNudge : 0)
+        .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [Self.libraryTileID: g.frame(in: .named("console.row"))]) })
+        .accessibilityLabel(t("console.menu.library") + ", " + libraryCount)
+        .accessibilityHint(t("console.library.open"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .padding(.horizontal, 8)
+        .id(Self.rowCell(Self.libraryTileID))
+    }
+
+    /// A held direction stopped at an end of the home row: the focused tile leans 6 pt that way and back (0.12 s). Not with Reduce Motion.
+    private func nudgeAtEdge(_ step: Int) {
+        guard !reduceMotion else { return }
+        withAnimation(.easeOut(duration: 0.06)) { edgeNudge = CGFloat(step) * 6 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { withAnimation(.easeIn(duration: 0.06)) { edgeNudge = 0 } }
     }
 
     private static func rowCell(_ id: String) -> String { "console.row." + id }
 
     private func hintBar(compact: Bool, width: CGFloat) -> some View {
+        let onTile = state.libraryTileFocused
         let items = {
             Group {
-                hint(.activate, "console.play", compact: compact)
-                hint(.options, "console.options", compact: compact)
+                hint(.activate, onTile ? "console.library.open" : "console.play", compact: compact)
+                if !onTile { hint(.options, "console.options", compact: compact) }
                 hint(.menu, "console.menu", compact: compact)
                 hint(.back, "console.desktop", compact: compact)
             }
@@ -614,7 +660,8 @@ enum ConsoleInput {
         sheetDepth = depth
         pad.scope = scope
         pad.show(default: nil)
-        if let restored, !state.exited { pad.focused = restored; return }   // a target gone by now falls back at the next press (PadFocus.show)
+        // a target gone by now falls back at the next press (PadFocus.show); on the home row the state says where the focus is (the row reorders)
+        if let restored, !state.exited, !(state.presentedSheet == nil && isRowTarget(restored)) { pad.focused = restored; return }
         switch state.presentedSheet {
         case let .options(id):
             let game = state.games.first { $0.id == id }
@@ -634,10 +681,18 @@ enum ConsoleInput {
         case .confirmReset: pad.focused = "console.confirmReset.reset"
         case .confirmUpdate: pad.focused = "console.confirmUpdate.go"
         case .mapping: pad.focused = state.mappingGameID == nil ? "console.map.menuSwap" : "console.map.swap"
-        case nil: pad.focused = state.exited ? "console.return" : state.focusedGame.map { "console.game." + $0.id } ?? "console.empty.desktop"
+        case nil: pad.focused = state.exited ? "console.return" : homeTarget
         }
     }
-    private func handle(_ input: ConsoleInput) {
+    /// The home row's focused tile as a pad target.
+    private var homeTarget: String {
+        if state.games.isEmpty { return "console.empty.desktop" }
+        return state.homeFocusedGame.map { "console.game." + $0.id } ?? Self.libraryTileID
+    }
+    private func isRowTarget(_ id: String?) -> Bool { id?.hasPrefix("console.game.") == true || id == Self.libraryTileID }
+
+    /// `isRepeat`: a held direction's repeat (LauncherGamepad.isRepeating, NSEvent.isARepeat) rather than a new press.
+    private func handle(_ input: ConsoleInput, isRepeat: Bool = false) {
         if editingOption != nil, input == .back || input == .activate { editingOption = nil; return }   // A or B lets a slider go
         if input == .back { driver.back(); return }
         if state.exited { if input == .activate { driver.returnFromGame() }; return }
@@ -646,55 +701,26 @@ enum ConsoleInput {
         switch input {
         case .left, .right:
             let step = input == .left ? -1 : 1
-            if state.presentedSheet == nil, pad.focused?.hasPrefix("console.game.") == true {
-                var snapshot = state; snapshot.moveFocus(step)
-                if let id = snapshot.focusedGame?.id { driver.focus(id); pad.focused = "console.game." + id }
+            if state.presentedSheet == nil, isRowTarget(pad.focused) {
+                // the row with the library tile last: a held direction stops at an end, a new press goes round (ConsoleState.moveFocus)
+                var snapshot = state
+                guard snapshot.moveFocus(step, repeat: isRepeat) else { if isRepeat { nudgeAtEdge(step) }; return }
+                if snapshot.libraryTileFocused { driver.focusLibraryTile(); pad.focused = Self.libraryTileID }
+                else if let id = snapshot.homeFocusedGame?.id { driver.focus(id); pad.focused = "console.game." + id }
             } else { pad.horizontal(step) }
         case .up: pad.move(dx: 0, dy: -1)
-        case .down: pad.move(dx: 0, dy: 1)
+        case .down:
+            if state.presentedSheet == nil, isRowTarget(pad.focused) { driver.openLibrary() }   // down from the row opens the library
+            else { pad.move(dx: 0, dy: 1) }
         case .activate: pad.activate()
         case .options:
             if case .options = state.presentedSheet { driver.back() }
-            else if state.presentedSheet == nil, let id = state.focusedGame?.id { driver.openOptions(id) }
+            else if state.presentedSheet == nil, !state.libraryTileFocused, let id = state.homeFocusedGame?.id { driver.openOptions(id) }
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
         case .back: break
         }
     }
 }
-
-/// Reusable 1.8:1 presentation; nil artwork uses the same quiet surface as the desktop library.
-/// A cover drawn from the title alone, in the launcher's palette: a dark gradient tinted by one of its accents, and the name.
-/// Nothing is loaded or bundled. The same title always gets the same colors.
-enum ConsolePlaceholder {
-    static func colors(for title: String) -> [Color] {
-        let accents = [LauncherPalette.cream, LauncherPalette.ready, LauncherPalette.building, LauncherPalette.unbuilt]
-        let seed = title.unicodeScalars.reduce(5381) { ($0 &* 33) &+ Int($1.value) }
-        let accent = accents[abs(seed) % accents.count]
-        return [accent.opacity(0.42), LauncherPalette.surface, LauncherPalette.background]
-    }
-}
-
-struct ConsoleArtwork: View {
-    let image: NSImage?
-    var title = ""
-    var focus = UnitPoint.center
-    var body: some View {
-        GeometryReader { geometry in
-            if let image { ArtworkFill(image: image, focus: focus).frame(width: geometry.size.width, height: geometry.size.height) }
-            else {
-                ZStack(alignment: .bottomLeading) {
-                    LinearGradient(colors: ConsolePlaceholder.colors(for: title), startPoint: .topLeading, endPoint: .bottomTrailing)
-                    if title.isEmpty { Image(systemName: "gamecontroller").font(.system(size: 50)).foregroundStyle(.secondary) }
-                    else {
-                        Text(title).font(.manrope(max(14, geometry.size.width / 11), .bold)).foregroundStyle(LauncherPalette.cream.opacity(0.9))
-                            .lineLimit(3).minimumScaleFactor(0.6).padding(geometry.size.width / 18)
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The width each button of the Home button hint was drawn at, by its pad id: ConsoleTests checks that it is the same in every language.
 struct ConsoleButtonWidths: PreferenceKey {
     static var defaultValue: [String: CGFloat] = [:]
@@ -705,24 +731,4 @@ struct ConsoleButtonWidths: PreferenceKey {
 private struct ConsoleTileFramesKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
-}
-
-/// A game's cover alone: the focused game's name is the big title above the row, so no tile carries a caption.
-struct ConsoleGameTile: View {
-    let game: ConsoleGame
-    let compact: Bool
-    let lang: Lang
-    var body: some View {
-        ConsoleArtwork(image: game.artwork, title: game.title, focus: game.artworkFocus).aspectRatio(1.8, contentMode: .fit)
-            .opacity(game.status == .ready ? 1 : 0.45)   // not playable on this Mac: dimmed, its status on top
-            .overlay(alignment: .bottomLeading) {
-                if game.status != .ready {
-                    Text(L10n.string(game.status.labelKey, lang)).font(.manrope(compact ? 14 : 18, .semibold))
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(LauncherPalette.background.opacity(0.93), in: Capsule()).padding(14)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.12), lineWidth: 1))
-    }
 }

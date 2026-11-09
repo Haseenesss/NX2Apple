@@ -25,10 +25,10 @@ import NXModel
         driver.focus("missing")
         XCTAssertEqual(driver.state.focusedGameID, "demo.2")
         var state = driver.state
-        state.moveFocus(-100)
+        state.focus("demo.0")
+        XCTAssertFalse(state.moveFocus(-1, repeat: true), "a held left stops at the first game")
         XCTAssertEqual(state.focusedGame?.id, "demo.0")
-        state.moveFocus(100)
-        XCTAssertEqual(state.focusedGame?.id, "demo.9", "the games this Mac cannot play come last")
+        XCTAssertEqual(driver.state.games.last?.id, "demo.9", "the games this Mac cannot play come last")
         XCTAssertEqual(MockConsoleDriver(scenario: .few, animated: false).state.games.count, 2)
         var empty = MockConsoleDriver(scenario: .empty, animated: false).state
         empty.moveFocus(1)
@@ -344,9 +344,9 @@ import NXModel
             return rep
         }
         try settle()
-        let first = try XCTUnwrap(driver.state.games.first).id, last = try XCTUnwrap(driver.state.games.last).id
+        let first = try XCTUnwrap(driver.state.homeGames.first).id
         let start = try snapshot("clip-1-start")
-        driver.focus(last); try settle(after: start)
+        driver.focusLibraryTile(); try settle(after: start)   // the row's far end: the library tile after its last game
         let atEnd = try snapshot("clip-2-last")
         driver.focus(first); try settle(after: atEnd)
         let rep = try snapshot("clip-3-back")

@@ -29,6 +29,7 @@ extension LiveConsoleDriver {
         prefs.values = [.startInConsole: ConsolePrompt.startInConsole, .promptOnController: ConsolePrompt.enabled,
                         .returnAfterPlay: ReturnAfterPlay.enabled, .onlyBuilt: LibraryFilter.load() == .built]
         prefs.batteryStyle = ConsoleBatteryStyle.saved
+        prefs.homeLimit = ConsoleHomeLimit.saved
         if let updates = appUpdates {
             prefs.appVersion = updates.version
             prefs.update = Self.update(updates, buildRunning: builds?.running == true)
@@ -178,6 +179,12 @@ extension LiveConsoleDriver {
     /// Settings → Appearance: how the top bar's chips show the battery.
     func setBatteryStyle(_ style: ConsoleBatteryStyle) {
         UserDefaults.standard.set(style.rawValue, forKey: ConsoleBatteryStyle.defaultsKey)
+        refreshDesktop()
+    }
+
+    /// Settings → Appearance: how many games the home row shows.
+    func setHomeLimit(_ limit: ConsoleHomeLimit) {
+        UserDefaults.standard.set(limit.rawValue, forKey: ConsoleHomeLimit.defaultsKey)
         refreshDesktop()
     }
 

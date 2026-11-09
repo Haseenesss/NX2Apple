@@ -189,7 +189,7 @@ struct ConsolePadSnapshot: Equatable {
                            platforms: Self.platforms(of: game), artwork: cover(game), artworkFocus: game.artwork.focus(for: .thumbnail),
                            status: Self.status(of: game, brokenMessage: t("console.broken")), settings: settings, values: values,
                            mapsButtons: game.isReady && SavedChoices.appReadsControllerMappings(app: game.appPath)
-                               && game.controllerSavingEnabled(environment: game.launchOptions))
+                               && game.controllerSavingEnabled(environment: game.launchOptions), lastPlayed: game.lastPlayed)
     }
 
     /// The library's game behind a console game (LiveConsoleDriver+Mapping.swift reads its own button mapping).
@@ -247,6 +247,7 @@ struct ConsolePadSnapshot: Equatable {
     func reloadCovers() { covers = [:]; for i in state.games.indices { state.games[i].hero = nil }; refresh() }
 
     func focus(_ gameID: String) { state.focus(gameID); loadHero() }
+    func focusLibraryTile() { state.focusLibraryTile() }
 
     func play(_ gameID: String) {
         state.play(gameID)
@@ -271,6 +272,8 @@ struct ConsolePadSnapshot: Equatable {
                     self.launchedPID = pid
                     self.launchedGame = game
                     if let pid { GameReturnWatcher.shared.didStart(pid: pid) { [weak self] in self?.gameDidTerminate(pid: pid) } }   // the launcher's one watcher and its switch (ReturnAfterPlay.swift)
+                    self.state.recordPlayed(gameID)
+                    self.library.recordPlayed(game.id)   // library.json: the home row's order, here and next time
                     self.state.starting = .opening
                     self.timeoutTask?.cancel()
                     self.timeoutTask = Task { [weak self] in

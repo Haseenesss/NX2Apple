@@ -690,7 +690,7 @@ struct LauncherView: View {
                     MainActor.assumeIsolated {
                         launching = false
                         if let error { launchError = error.localizedDescription }
-                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid) }   // ReturnAfterPlay.swift
+                        else if let pid { GameReturnWatcher.shared.didStart(pid: pid); library.recordPlayed(game.id) }   // ReturnAfterPlay.swift; lastPlayed orders console mode's home row
                     }
                 }
             }

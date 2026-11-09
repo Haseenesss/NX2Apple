@@ -17,6 +17,9 @@ final class LauncherGamepad: ObservableObject {
     /// `select` is the Select-type button (DualShock Share, DualSense Create, Xbox View, Nintendo Minus): GameController's
     /// `buttonOptions`. The system does not claim it, so it always reaches the app. The desktop launcher opens console mode with it.
     var perform: (Action) -> Void = { _ in }
+    /// True while `perform` runs for a held direction's repeat rather than for a new press: console mode's home row stops at its
+    /// ends on a repeat and goes round on a new press. Tests set it around a `perform` to act as a held button.
+    var isRepeating = false
     /// Sees every press with the controller it came from before it navigates. Returning true consumes it (the Controllers sheet uses
     /// this to give the next press to the player being assigned).
     var capture: ((String, Action) -> Bool)?
@@ -190,7 +193,12 @@ final class LauncherGamepad: ObservableObject {
         repeating = action
         repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self, self.repeating == action else { return }
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.fire(action) }
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.isRepeating = true
+                self.fire(action)
+                self.isRepeating = false
+            }
         }
     }
 

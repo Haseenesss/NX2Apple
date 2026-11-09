@@ -52,10 +52,26 @@ struct ConsoleGame: Identifiable {
     var cheats: ConsoleCheats?
     var canReset = false
     var save: ConsoleSaveRow?
+    /// When it was last started from the launcher, the desktop or console mode (LibraryGame.lastPlayed); nil for never.
+    var lastPlayed: Date?
 
     /// The console's order: the games this Mac can play first, then the rest, each group in the order it came in.
     static func readyFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
         games.filter { $0.status == .ready } + games.filter { $0.status != .ready }
+    }
+
+    /// The most recently played first, then the games never played by name.
+    static func recentFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
+        games.enumerated().sorted { a, b in
+            switch (a.element.lastPlayed, b.element.lastPlayed) {
+            case let (x?, y?) where x != y: return x > y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default:
+                let order = a.element.title.localizedStandardCompare(b.element.title)
+                return order == .orderedSame ? a.offset < b.offset : order == .orderedAscending
+            }
+        }.map(\.element)
     }
 
     func value(_ setting: LaunchSetting) -> String { values[setting.env] ?? setting.def }
@@ -206,8 +222,13 @@ struct ConsolePadLayout: Equatable {
 }
 
 struct ConsoleState {
+    /// Every game the library shows (its filter applied): the library page's grid. The home row is `homeGames`.
     var games: [ConsoleGame] = []
     var focusedGameID: String?
+    /// The home row's last tile, the way to the library page, has the focus: the title and the backdrop show the library.
+    var libraryTileFocused = false
+    /// The game picked on the library page: it leads the home row until another game is played (its lastPlayed is not changed).
+    var frontGameID: String?
     /// A stack allows an explanation or Controllers to return to the options underneath it.
     var sheets: [ConsoleSheet] = []
     var controllers: [ConsoleController] = []
@@ -253,18 +274,59 @@ struct ConsoleState {
     var focusedGame: ConsoleGame? { games.first { $0.id == focusedGameID } ?? games.first }
     var startingGame: ConsoleGame? { games.first { $0.id == startingGameID } }
 
+    /// How many games the home row shows (Settings → Appearance), nil for all.
+    var homeLimit: Int? { prefs.homeLimit.count }
+    /// The home row: the game picked on the library page, then the most recently played, then the rest by name, the first
+    /// `homeLimit` of them. The library tile follows them whatever their number.
+    var homeGames: [ConsoleGame] {
+        var ordered = ConsoleGame.recentFirst(games)
+        if let front = frontGameID, let i = ordered.firstIndex(where: { $0.id == front }) { ordered.insert(ordered.remove(at: i), at: 0) }
+        return homeLimit.map { Array(ordered.prefix($0)) } ?? ordered
+    }
+    /// The game the home screen shows focused: the focused game when the row has it, else the row's first; nil on the library tile.
+    var homeFocusedGame: ConsoleGame? {
+        guard !libraryTileFocused else { return nil }
+        let row = homeGames
+        return row.first { $0.id == focusedGameID } ?? row.first
+    }
+    /// The games built for this Mac or an iPhone (LibraryFilter.built), for the library tile's count.
+    var builtCount: Int { games.filter { $0.status == .ready || $0.status == .iphoneOnly }.count }
+
     mutating func focus(_ id: String) {
         guard startingGameID == nil, sheets.isEmpty, !exited, games.contains(where: { $0.id == id }) else { return }
         focusedGameID = id
+        libraryTileFocused = false
     }
-    mutating func moveFocus(_ step: Int) {
-        guard !games.isEmpty else { return }
-        let index = games.firstIndex { $0.id == focusedGame?.id } ?? 0
-        focus(games[min(max(index + step, 0), games.count - 1)].id)
+    /// The home row's library tile takes the focus (the game focused before is kept for when the focus comes back).
+    mutating func focusLibraryTile() {
+        guard startingGameID == nil, sheets.isEmpty, !exited else { return }
+        libraryTileFocused = true
+    }
+    /// Left and right along the home row, the library tile last. Inside the row the focus moves one place. At either end a held
+    /// direction (`isRepeat`) stops there, and returns false so the view can show the edge; a new press goes round: left on the
+    /// first game to the library tile, right on the tile to the first game.
+    @discardableResult mutating func moveFocus(_ step: Int, repeat isRepeat: Bool = false) -> Bool {
+        guard startingGameID == nil, sheets.isEmpty, !exited else { return false }
+        let row = homeGames
+        let count = row.count + 1   // the games, then the tile
+        let index = libraryTileFocused ? row.count : (row.firstIndex { $0.id == focusedGameID } ?? 0)
+        var target = index + step
+        if target < 0 || target >= count {
+            guard !isRepeat, count > 1 else { return false }
+            target = (target % count + count) % count
+        }
+        if target == row.count { focusLibraryTile() } else { focus(row[target].id) }
+        return true
+    }
+    /// A game started: it is the most recent now, so the library page's pick no longer leads the row.
+    mutating func recordPlayed(_ id: String, at date: Date = Date()) {
+        guard let i = games.firstIndex(where: { $0.id == id }) else { return }
+        games[i].lastPlayed = date
+        if frontGameID != nil { frontGameID = nil }
     }
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
-        if game.status == .ready { startingGameID = id; starting = .preparing; sheets = [] }
+        if game.status == .ready { startingGameID = id; starting = .preparing; sheets = []; libraryTileFocused = false }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }
     mutating func openOptions(_ id: String) {
@@ -405,6 +467,10 @@ struct ConsoleState {
     /// A launcher switch (on the Library, Controllers or Settings page), and the app's update (checked, or asked about and then installed or restarted into).
     func setPref(_ pref: ConsolePref, on: Bool)
     func setBatteryStyle(_ style: ConsoleBatteryStyle)
+    /// Settings → Appearance: how many games the home row shows.
+    func setHomeLimit(_ limit: ConsoleHomeLimit)
+    /// The home row's library tile took the focus (the pad focus moved there).
+    func focusLibraryTile()
     func appUpdateAction()
     func confirmAppUpdate()
     /// The system's Home button setting (macOS 27), from the Controllers page.
@@ -463,6 +529,8 @@ extension ConsoleDriver {
     func openOnDesktop(_ gameID: String) { exitToDesktop() }
     func setPref(_ pref: ConsolePref, on: Bool) {}
     func setBatteryStyle(_ style: ConsoleBatteryStyle) {}
+    func setHomeLimit(_ limit: ConsoleHomeLimit) {}
+    func focusLibraryTile() {}
     func appUpdateAction() {}
     func confirmAppUpdate() {}
     func openSystemHomeSettings() {}

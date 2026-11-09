@@ -38,6 +38,8 @@ import NXLauncher
     func openOnDesktop(_ gameID: String) { base.openOnDesktop(gameID) }
     func setPref(_ pref: ConsolePref, on: Bool) { base.setPref(pref, on: on) }
     func setBatteryStyle(_ style: ConsoleBatteryStyle) { base.setBatteryStyle(style) }
+    func setHomeLimit(_ limit: ConsoleHomeLimit) { base.setHomeLimit(limit) }
+    func focusLibraryTile() { base.focusLibraryTile() }
     func appUpdateAction() { base.appUpdateAction() }
     func confirmAppUpdate() { base.confirmAppUpdate() }
     func openSystemHomeSettings() { base.openSystemHomeSettings() }
@@ -474,7 +476,7 @@ struct ConsoleToastView: View {
         .environment(\.padRingStyle, .hug)
         .onAppear { pad.scope = "console.controllers"; pad.focused = "console.controller.merge" }
         .overlay(alignment: .bottom) { if let toast = driver.state.toast { ConsoleToastView(toast: toast) } }
-        .background(ConsoleKeyboardInput { input in
+        .background(ConsoleKeyboardInput { input, _ in
             pad.show(default: "console.controller.merge")
             switch input {
             case .back: close()

@@ -43,10 +43,13 @@ import NXLauncher
                         status: index == 3 ? .needsBuild : index == 5 ? .needsData : index == 7 ? .broken(t("console.demoBroken")) : index == 9 ? .iphoneOnly : .ready,
                         settings: settings, mapsButtons: !(index == 3 || index == 5 || index == 7 || index == 9))
         })
-        var snapshot = ConsoleState(games: scenario == .empty ? [] : scenario == .few ? Array(games.prefix(2)) : games,
+        // played one after another, most recently in this order (the home row's), the last two never
+        let now = Date(timeIntervalSince1970: 1_793_210_400)
+        let played = games.enumerated().map { i, g in var g = g; g.lastPlayed = i < games.count - 2 ? now.addingTimeInterval(-Double(i + 1) * 5400) : nil; return g }
+        var snapshot = ConsoleState(games: scenario == .empty ? [] : scenario == .few ? Array(played.prefix(2)) : played,
                                     focusedGameID: scenario == .empty ? nil : "demo.0",
                                     controllers: [.init(id: "pad.1", name: t("console.demoController"), player: 1)],
-                                    time: Date(timeIntervalSince1970: 1_793_210_400))
+                                    time: now)
         snapshot.isPreview = true
         snapshot.prefs = ConsolePrefs(values: [:], appVersion: "1.2.3", update: .available("1.2.4"))
         snapshot.homeButtonAvailable = true
@@ -69,9 +72,11 @@ import NXLauncher
         if scenario == .starting, animated { animateStarting("demo.0") }
     }
     func focus(_ gameID: String) { state.focus(gameID) }
+    func focusLibraryTile() { state.focusLibraryTile() }
     func play(_ gameID: String) {
         let wasStarting = state.startingGameID != nil
         state.play(gameID)
+        if !wasStarting, state.startingGameID == gameID { state.recordPlayed(gameID, at: state.time) }
         if !wasStarting, state.startingGameID != nil, animated { animateStarting(gameID) }
     }
     private func animateStarting(_ gameID: String) {
@@ -137,6 +142,7 @@ import NXLauncher
     }
     func setPref(_ pref: ConsolePref, on: Bool) { state.prefs.values[pref] = on }
     func setBatteryStyle(_ style: ConsoleBatteryStyle) { state.prefs.batteryStyle = style }
+    func setHomeLimit(_ limit: ConsoleHomeLimit) { state.prefs.homeLimit = limit }
     func appUpdateAction() {
         switch state.prefs.update {
         case .available, .ready: state.push(.confirmUpdate)
