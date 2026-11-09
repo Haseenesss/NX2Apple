@@ -360,7 +360,12 @@ struct ConsolePadSnapshot: Equatable {
               let shown = state.games.first(where: { $0.id == gameID }), let s = shown.settings.first(where: { $0.env == env }),
               let stored = shown.values[env] else { return }
         if s.storeBacked { SavedChoices(app: game.appPath, titleID: game.titleID).set(s, stored) } else { library.setLaunchOption(s, stored, for: game.id) }
-        loadDetails(gameID)   // Reset to defaults shows once something differs
+        // Reset to defaults shows once something differs. Only that is read again here: the rest of the details (the cloud save's
+        // state reads the whole game log) stays as the options page loaded it, so a slider moves without waiting on the disk.
+        if let updated = library.games.first(where: { $0.id == game.id }), let i = state.games.firstIndex(where: { $0.id == gameID }) {
+            state.games[i].canReset = !updated.launchOptions.isEmpty
+                || SavedChoices(app: updated.appPath, titleID: updated.titleID).hasChoices(state.games[i].settings)
+        }
     }
 
     // MARK: Controllers
@@ -501,7 +506,7 @@ struct ConsolePadSnapshot: Equatable {
     /// How long one Identify rumbles. The pattern is stopped by hand after it, whatever the controller does with the pattern's end.
     static let rumbleSeconds = 0.6
 
-    /// The launcher's app updates and builds, for the General page and the build chip (LiveConsoleDriver+Desktop). Set by the session.
+    /// The launcher's app updates and builds, for the Settings page and the build chip (LiveConsoleDriver+Desktop). Set by the session.
     weak var appUpdates: AppUpdateStore?
     weak var builds: BuildStore?
 

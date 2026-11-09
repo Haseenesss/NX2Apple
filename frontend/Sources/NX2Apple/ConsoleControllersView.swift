@@ -26,9 +26,14 @@ import NXLauncher
     func toggleArranging() { base.toggleArranging() }
     func toggleHold() { base.toggleHold() }
     func moveHeld(_ step: Int) { base.moveHeld(step) }
-    func openGeneral() { base.openGeneral() }
+    func pickUp(_ gameID: String) { base.pickUp(gameID) }
+    func putDown() { base.putDown() }
+    func setLibraryOrder(_ order: LibraryOrder) { base.setLibraryOrder(order) }
+    func openLibrary() { base.openLibrary() }
+    func openSettings() { base.openSettings() }
     func openCloudSaves() { base.openCloudSaves() }
     func openLanguage() { base.openLanguage() }
+    func openAppearance() { base.openAppearance() }
     func confirmExit() { base.confirmExit() }
     func testRumble(gameID: String) { base.testRumble(gameID: gameID) }
     func setMod(gameID: String, name: String, on: Bool) { base.setMod(gameID: gameID, name: name, on: on) }
@@ -39,6 +44,7 @@ import NXLauncher
     func resetOptions(_ gameID: String) { base.resetOptions(gameID) }
     func openOnDesktop(_ gameID: String) { base.openOnDesktop(gameID) }
     func setPref(_ pref: ConsolePref, on: Bool) { base.setPref(pref, on: on) }
+    func setBatteryStyle(_ style: ConsoleBatteryStyle) { base.setBatteryStyle(style) }
     func appUpdateAction() { base.appUpdateAction() }
     func confirmAppUpdate() { base.confirmAppUpdate() }
     func openSystemHomeSettings() { base.openSystemHomeSettings() }
@@ -126,11 +132,15 @@ struct ConsoleBattery: View {
     let controller: ConsoleController
     let lang: Lang
     var compact = false
+    /// What of it the chip shows (Settings → Appearance); the Controllers list always shows both.
+    var style: ConsoleBatteryStyle = .both
     var body: some View {
-        if let percent = controller.batteryPercent {
+        if style == .hidden {
+            EmptyView()
+        } else if let percent = controller.batteryPercent {
             HStack(spacing: 5) {
-                BatteryIcon(level: controller.battery, charging: controller.charging, height: compact ? 10 : 13)
-                Text(String(format: L10n.string("console.batteryPercent", lang), percent))
+                if style.showsIcon { BatteryIcon(level: controller.battery, charging: controller.charging, height: compact ? 10 : 13) }
+                if style.showsPercent { Text(String(format: L10n.string("console.batteryPercent", lang), percent)) }
             }
             .font(.manrope(compact ? 11 : 16, .medium))
             .foregroundStyle(BatteryIcon.isLow(controller.battery) && !controller.charging ? Color.red : .white.opacity(0.7))
@@ -139,6 +149,10 @@ struct ConsoleBattery: View {
         } else if controller.charging {
             HStack(spacing: 5) { BatteryIcon(level: nil, charging: true, height: compact ? 10 : 13) }
                 .accessibilityElement(children: .ignore).accessibilityLabel(L10n.string("console.charging", lang))
+        } else if style.showsIcon, controller.kind != .keyboard {
+            // a controller whose battery macOS does not report (an Xbox pad over Bluetooth): the outline alone, never a guessed number
+            BatteryIcon(level: nil, charging: false, height: compact ? 10 : 13)
+                .accessibilityElement(children: .ignore).accessibilityLabel(L10n.string("console.batteryUnknown", lang))
         }
     }
 }
@@ -149,6 +163,7 @@ struct ConsoleControllerChips: View {
     let merged: Bool
     let lang: Lang
     var compact = false
+    var batteryStyle: ConsoleBatteryStyle = .both
     var scope = "console"
     let openControllers: () -> Void
     @EnvironmentObject private var pad: PadFocus
@@ -178,7 +193,7 @@ struct ConsoleControllerChips: View {
                     HStack(spacing: compact ? 5 : 8) {
                         Image(systemName: controller.kind.symbol).accessibilityHidden(true)
                         Text((merged ? 1 : controller.player).map { String(format: t("console.playerShort"), $0) } ?? "\u{2014}")   // the full "Unassigned" is in the Controllers list
-                        ConsoleBattery(controller: controller, lang: lang, compact: compact)
+                        ConsoleBattery(controller: controller, lang: lang, compact: compact, style: batteryStyle)
                     }
                 }
             }
@@ -207,7 +222,7 @@ struct ConsoleControllerChips: View {
         Button(action: openControllers) {
             content().font(.manrope(compact ? 12 : 17, .semibold))
                 .padding(.horizontal, compact ? 10 : 14).frame(height: compact ? 30 : 40)
-                .background(.white.opacity(0.075), in: Capsule()).contentShape(Capsule())
+                .consoleGlass(Capsule()).contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -262,6 +277,7 @@ struct ConsoleToastView: View {
                     if showsJoyconSplit { joyconSplitToggle }
                     if showsMapping { mappingEntry }
                     if showsMapping && state.homeButtonAvailable { homeEntry }
+                    if showsMapping { ForEach(ConsolePref.onControllers, id: \.self) { prefToggle($0) } }   // the ways into console mode, as the desktop's Controls card has them
                     Text(t("console.controllerNote")).font(.manrope(compact ? 17 : 22)).foregroundStyle(.secondary)
                     HStack(spacing: 12) {
                         ForEach(1...4, id: \.self) { player in
@@ -284,6 +300,7 @@ struct ConsoleToastView: View {
                 }
                 .padding(.horizontal, compact ? 24 : 40).padding(.vertical, 12)
             }
+            .consoleScrollFade()
             .onChange(of: pad.focused) { id in
                 if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } }
             }
@@ -329,6 +346,28 @@ struct ConsoleToastView: View {
         .padTarget("console.controller.mapping", scope: scope, radius: 10, activate: open)
         .accessibilityLabel(t("console.mapping")).accessibilityValue(value)
         .accessibilityHint(t("console.menu.mappingNote"))
+    }
+
+    /// A launcher switch about controllers (ConsolePref.onControllers: start in console mode, offer it when a controller connects), as
+    /// a switch with what it does under it. Console mode only: the desktop's Controls card has the same switches.
+    private func prefToggle(_ pref: ConsolePref) -> some View {
+        let on = state.prefs[pref]
+        let flip = { driver.setPref(pref, on: !on) }
+        return Button(action: flip) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(t(pref.titleKey)).font(.manrope(compact ? 16 : 18, .semibold))
+                    Text(t(pref.noteKey)).font(.manrope(compact ? 14 : 16)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: Binding(get: { on }, set: { _ in flip() })).labelsHidden().toggleStyle(LauncherSwitchStyle()).allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10)).contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .padTarget("console.pref." + pref.rawValue, scope: scope, radius: 10, activate: flip, adjust: { _ in flip() })
+        .accessibilityLabel(t(pref.titleKey)).accessibilityHint(t(pref.noteKey)).accessibilityValue(t(on ? "console.on" : "console.off"))
     }
 
     /// "Quit games with the Home button": the system's setting on macOS 27 (HomeButtonSettings), opened as the desktop's Controls page does.
@@ -458,5 +497,21 @@ struct ConsoleToastView: View {
             default: break
             }
         })
+    }
+}
+
+extension View {
+    /// The top bar's controls sit on the game's art, which can be bright. A shadow under them looked dirty there; instead each is a
+    /// light pane: a little of the art behind it blurred, a faint white fill, and a hairline edge brighter at the top, catching the light.
+    func consoleGlass<S: InsettableShape>(_ shape: S) -> some View {
+        background {
+            ZStack {
+                shape.fill(.ultraThinMaterial).opacity(0.55)
+                shape.fill(Color.white.opacity(0.06))
+                shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.24), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom),
+                                   lineWidth: 0.75)
+            }
+            .allowsHitTesting(false)
+        }
     }
 }

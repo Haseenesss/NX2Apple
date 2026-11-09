@@ -43,6 +43,7 @@ struct RootView: View {
                             ConsoleView(driver: shared.console, lang: lang, onExit: { console.exit(); shared.console.returnFromGame() },
                                         chooseLanguage: { code in stores.localizer.choose(code); shared.console.refresh() })
                         }
+                            .ignoresSafeArea()   // on a notched screen the console covers the band beside the notch too (ConsoleScreenFill)
                             .onAppear { shared.console.reloadCovers() }
                             .transition(CalmTransition.console)
                     } else {
@@ -61,7 +62,7 @@ struct RootView: View {
             shared.console.prepareLaunch = { [console] launch in console.startGameInFullScreen(then: launch) }   // the console stays full screen into the game
             shared.console.pointerHidden = { [console] in console.pointerHidden }
             shared.console.gameEnded = { [console] in console.resumeFullScreenAfterGame() }
-            shared.console.attach(updates: stores.appUpdates, builds: stores.build)   // the General page's update row and the build chip
+            shared.console.attach(updates: stores.appUpdates, builds: stores.build)   // the Settings page's update row and the build chip
             await decide()
         }
         .onChange(of: mode) { console.available = $0 == .launcher }
@@ -70,20 +71,17 @@ struct RootView: View {
     /// On launch: a setup marked done, or one that is complete already, goes straight to the launcher (and is marked done);
     /// anything else starts or resumes the guided setup.
     private func decide() async {
-        let defaults = UserDefaults.standard
-        // NSPB_ONBOARDING_FORCE=1: the real flow with real detection whatever the state, leaving no trace until it is finished
-        if OnboardingLaunch.forced() { show(fresh: false, ephemeral: true); return }
-        if defaults.bool(forKey: OnboardingDefaults.completed) { mode = .launcher; return }
-        await stores.dependencies.refreshDepsAndWait()
-        let env = OnboardingEnvironment()
-        let keysKnown = stores.build.slot("keys").ok || !env.keyCandidates(gamesFolder: library.folder).isEmpty || library.games.contains(where: \.isReady)
-        let gamesKnown = !library.folder.isEmpty || !library.games.isEmpty
-        let complete = OnboardingLaunch.setupComplete(depsPresent: stores.dependencies.allPresent, keysKnown: keysKnown, gamesKnown: gamesKnown)
-        if OnboardingLaunch.shouldShow(completed: false, setupComplete: complete) {
-            show(fresh: false)
-        } else {
-            defaults.set(true, forKey: OnboardingDefaults.completed)
-            mode = .launcher
+        let destination = await OnboardingLaunch.decide(defaults: .standard, force: OnboardingLaunch.forced(), keysSlotIsEmpty: stores.build.keysPath.isEmpty) {
+            await stores.dependencies.refreshDepsAndWait()
+            let env = OnboardingEnvironment()
+            let keysKnown = stores.build.slot("keys").ok || !env.keyCandidates(gamesFolder: library.folder).isEmpty || library.games.contains(where: \.isReady)
+            let gamesKnown = !library.folder.isEmpty || !library.games.isEmpty
+            return OnboardingLaunch.setupComplete(depsPresent: stores.dependencies.allPresent, keysKnown: keysKnown, gamesKnown: gamesKnown)
+        }
+        switch destination {
+        case .launcher: mode = .launcher
+        case .onboarding: show(fresh: false)
+        case .forced: show(fresh: false, ephemeral: true)
         }
     }
 
@@ -98,7 +96,7 @@ struct RootView: View {
     private func runSetupAgain() { show(fresh: true) }
 }
 
-/// The console mode redrawn in the language its General page picks (the root view itself does not observe the localizer).
+/// The console mode redrawn in the language its Settings page picks (the root view itself does not observe the localizer).
 private struct ConsoleInLanguage<Content: View>: View {
     @ObservedObject var localizer: Localizer
     let content: (Lang) -> Content

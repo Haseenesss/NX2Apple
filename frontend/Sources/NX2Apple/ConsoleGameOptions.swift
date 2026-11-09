@@ -38,6 +38,99 @@ struct ConsoleMenuRow: View {
 
 /// A switch on a row of its own: its name, what it does under it, the switch at the right. A (or left and right) flips it. A row that
 /// cannot be switched (a mod that changes the game's code) is dimmed and says why, and takes no focus.
+/// The Appearance page: what console mode shows and how, each a choice of a few values. Its own page, so the General page stays
+/// short as more of the look becomes a choice.
+@MainActor struct ConsoleAppearanceList<Driver: ConsoleDriver>: View {
+    @ObservedObject var driver: Driver
+    let lang: Lang
+    let compact: Bool
+    static var scope: String { "console.appearance" }
+    private var scope: String { Self.scope }
+    private func t(_ key: String) -> String { L10n.string(key, lang) }
+    private var prefs: ConsolePrefs { driver.state.prefs }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ConsoleChoiceRow(id: "console.appearance.battery", scope: scope, title: t("console.battery.style"), note: t("console.battery.styleNote"),
+                             choices: ConsoleBatteryStyle.allCases.map { ($0.rawValue, t($0.titleKey)) }, chosen: prefs.batteryStyle.rawValue, compact: compact,
+                             preview: AnyView(ConsoleBatteryPreview(style: prefs.batteryStyle, lang: lang, compact: compact))) { raw in
+                if let style = ConsoleBatteryStyle(rawValue: raw) { driver.setBatteryStyle(style) }
+            }
+        }
+    }
+}
+
+/// The top bar's controller chip as the chosen battery style draws it, over the choice: a controller at 76 %, player 1. A controller
+/// that reports no battery shows none whatever the choice, and the note under the row says so.
+struct ConsoleBatteryPreview: View {
+    let style: ConsoleBatteryStyle
+    let lang: Lang
+    let compact: Bool
+    var body: some View {
+        let demo = ConsoleController(id: "preview", name: L10n.string("console.demoController", lang), player: 1, kind: .paired, battery: 0.76, charging: false)
+        HStack(spacing: compact ? 5 : 8) {
+            Image(systemName: demo.kind.symbol).accessibilityHidden(true)
+            Text(String(format: L10n.string("console.playerShort", lang), 1))
+            ConsoleBattery(controller: demo, lang: lang, compact: compact, style: style)
+        }
+        .font(.manrope(compact ? 12 : 17, .semibold))
+        .padding(.horizontal, compact ? 10 : 14).frame(height: compact ? 30 : 40)
+        .consoleGlass(Capsule())
+        .animation(.easeOut(duration: 0.15), value: style)
+        .accessibilityLabel(L10n.string("console.battery.stylePreview", lang))
+    }
+}
+
+/// One setting with a few values side by side, the chosen one cream (the mapping page's layout segments): each segment is a pad
+/// target, so left and right move the focus between them and A picks the one in focus. No `adjust` on the segments: with it, left
+/// and right changed the value under a focus that stayed put, and the next A put the focused value back.
+struct ConsoleChoiceRow: View {
+    let id: String
+    let scope: String
+    let title: String
+    var note = ""
+    /// Each value's key and label, in order.
+    let choices: [(String, String)]
+    let chosen: String
+    let compact: Bool
+    /// Shown between the title and the segments: what the chosen value looks like.
+    var preview: AnyView? = nil
+    let pick: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.manrope(compact ? 17 : 20, .semibold)).fixedSize(horizontal: false, vertical: true)
+            if let preview { preview.frame(maxWidth: .infinity, alignment: .center).padding(.vertical, compact ? 4 : 8) }
+            HStack(spacing: 8) { ForEach(choices, id: \.0) { choice in segment(choice.0, label: choice.1) } }
+            if !note.isEmpty { Text(note).font(.manrope(compact ? 13 : 15)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }
+        .padding(.horizontal, 20).padding(.vertical, compact ? 14 : 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LauncherPalette.surface, in: RoundedRectangle(cornerRadius: 14))
+        .id(id)
+    }
+
+    private func segment(_ key: String, label: String) -> some View {
+        let isChosen = key == chosen
+        let choose = { pick(key) }
+        return Button(action: choose) {
+            Text(label).font(.manrope(compact ? 14 : 16, isChosen ? .bold : .semibold))
+                .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.75)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, minHeight: compact ? 44 : 50)
+                .foregroundStyle(isChosen ? LauncherPalette.background : .white.opacity(0.85))
+                .background(isChosen ? LauncherPalette.cream : .white.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(isChosen ? 0 : 0.08)))
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title + ", " + label)
+        .accessibilityAddTraits(isChosen ? .isSelected : [])
+        .padTarget(id + "." + key, scope: scope, radius: 10, activate: choose)
+        .id(id + "." + key)
+    }
+}
+
 struct ConsoleSwitchRow: View {
     let id: String
     let scope: String
@@ -188,7 +281,7 @@ struct ConsoleSwitchRow: View {
         }
         .padding(.horizontal, 20).padding(.vertical, compact ? 14 : 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LauncherPalette.surface, in: RoundedRectangle(cornerRadius: 14))
+        .background(LauncherPalette.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))   // read only: quieter than the rows the focus can land on
         .padding(.top, 14)
         .accessibilityElement(children: .combine)
     }
@@ -213,30 +306,56 @@ struct ConsoleSwitchRow: View {
     }
 }
 
-/// The General page: the display language and the cloud saves (pages of their own), the app's update, then the launcher's switches.
-@MainActor struct ConsoleGeneralList<Driver: ConsoleDriver>: View {
+/// The Library page: the order of the games (Recent, Name, or arranged with RB), the library's switch (only built games), and the
+/// way to the cloud saves page.
+@MainActor struct ConsoleLibraryList<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver
     let lang: Lang
     let compact: Bool
-    let languageName: String
-    static var scope: String { "console.general" }
+    static var scope: String { "console.library" }
     private var scope: String { Self.scope }
     private func t(_ key: String) -> String { L10n.string(key, lang) }
     private var prefs: ConsolePrefs { driver.state.prefs }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ConsoleMenuRow(id: "console.general.language", scope: scope, symbol: "globe", title: t("console.language.title"),
-                           note: t("console.language.note"), value: languageName, compact: compact) { driver.openLanguage() }
-            ConsoleMenuRow(id: "console.general.saves", scope: scope, symbol: "icloud", title: t(ConsoleCloudSaves.menuKey),
-                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
-            ConsoleMenuRow(id: "console.general.update", scope: scope, symbol: "arrow.down.app", title: t("console.update.title"),
-                           note: updateNote, value: updateValue, compact: compact) { driver.appUpdateAction() }
-            ConsoleSectionHeading(title: t("console.general.launcher"), compact: compact).padding(.top, 14)
-            ForEach(ConsolePref.allCases, id: \.self) { pref in
+            // Recent and Name, as the desktop offers them; Custom while an order arranged with RB is in use, which either choice ends
+            ConsoleMenuRow(id: "console.library.order", scope: scope, symbol: "arrow.up.arrow.down", title: t("console.order.title"),
+                           note: t(prefs.order == .custom ? "console.order.noteCustom" : "console.order.note"), value: t(prefs.order.labelKey),
+                           compact: compact) { driver.setLibraryOrder(prefs.order == .recent ? .name : .recent) }
+            ForEach(ConsolePref.onLibrary, id: \.self) { pref in
                 ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
                                  isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
             }
+            ConsoleMenuRow(id: "console.library.saves", scope: scope, symbol: "icloud", title: t(ConsoleCloudSaves.menuKey),
+                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
+        }
+    }
+}
+
+/// The Settings page: the display language (a page of its own), the app's update, and the launcher's switch for after a game quits.
+@MainActor struct ConsoleSettingsList<Driver: ConsoleDriver>: View {
+    @ObservedObject var driver: Driver
+    let lang: Lang
+    let compact: Bool
+    let languageName: String
+    static var scope: String { "console.settings" }
+    private var scope: String { Self.scope }
+    private func t(_ key: String) -> String { L10n.string(key, lang) }
+    private var prefs: ConsolePrefs { driver.state.prefs }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ConsoleMenuRow(id: "console.settings.language", scope: scope, symbol: "globe", title: t("console.language.title"),
+                           note: t("console.language.note"), value: languageName, compact: compact) { driver.openLanguage() }
+            ConsoleMenuRow(id: "console.settings.update", scope: scope, symbol: "arrow.down.app", title: t("console.update.title"),
+                           note: updateNote, value: updateValue, compact: compact) { driver.appUpdateAction() }
+            ForEach(ConsolePref.onSettings, id: \.self) { pref in
+                ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
+                                 isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
+            }
+            ConsoleMenuRow(id: "console.settings.appearance", scope: scope, symbol: "paintpalette", title: t("console.settings.appearance"),
+                           note: t("console.settings.appearanceNote"), compact: compact) { driver.openAppearance() }
         }
     }
 

@@ -172,7 +172,13 @@ extension LauncherView {
                 LauncherSegmented(options: LibraryOrder.choices.map { ($0.rawValue, loc.t($0.labelKey)) },
                                   selection: libraryOrder.rawValue) { setLibraryOrder(LibraryOrder(rawValue: $0) ?? .recent) }
                     .frame(width: LauncherControl.width)
-                    .help(loc.t("order.help"))
+                    // an order arranged by hand (a card dragged here, or RB in console mode) is neither choice: a dot says so
+                    .overlay(alignment: .topTrailing) {
+                        if libraryOrder == .custom {
+                            Circle().fill(LauncherPalette.cream).frame(width: 7, height: 7).offset(x: 2, y: -2).accessibilityHidden(true)
+                        }
+                    }
+                    .help(loc.t(libraryOrder == .custom ? "library.orderCustom" : "order.help"))
                     .padTarget("library.order", scope: "main", radius: 17,
                                activate: { setLibraryOrder(libraryOrder == .recent ? .name : .recent) },
                                adjust: { setLibraryOrder($0 > 0 ? .name : .recent) })
@@ -193,33 +199,7 @@ extension LauncherView {
                         HStack(alignment: .top, spacing: 14) {
                             ForEach(games) { game in
                                 let _ = LauncherWork.count(.card)
-                                let look = cardLook(game)
-                                Button { library.selectedID = game.id } label: {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        ZStack {
-                                            if let image = artwork[game.id] {
-                                                ArtworkFill(image: image, focus: displayed(game).artwork.focus(for: .thumbnail))
-                                            } else {
-                                                LauncherPalette.surface
-                                                Image(systemName: "gamecontroller").font(.system(size: 30, weight: .light)).foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        .frame(width: cardWidth, height: cardWidth / 1.8).clipped()
-                                        .coverLook(look, percent: look.building ? buildProgress.map { "\(Int($0 * 100))%" } : nil,
-                                                   tint: LauncherPalette.building)
-                                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(
-                                            game.id == heroID ? LauncherPalette.cream : .clear, lineWidth: 2))
-                                        Text(game.name).font(.manrope(16, .semibold)).lineLimit(1)
-                                        status(game)
-                                        Capsule().fill(game.id == heroID ? LauncherPalette.cream : .clear)
-                                            .frame(height: 3).padding(.top, 4)
-                                    }
-                                    .frame(width: cardWidth, alignment: .leading).contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityAddTraits(game.id == heroID ? .isSelected : [])
-                                .padTarget("card." + game.id.uuidString, scope: "main", radius: 7) { if !launching { primaryAction(game) } }
+                                card(game, width: cardWidth, heroID: heroID, rowWidth: width - 68 + 2 * Self.ringRoom)
                             }
                         }
                         // Room for the controller's focus ring, which sits 4 pt outside a card: the row clips at its edges, so it
@@ -228,9 +208,21 @@ extension LauncherView {
                         .background(EnclosingScrollView(row: row))
                     }
                     .padding(.horizontal, -Self.ringRoom).padding(.vertical, -Self.ringRoom)
+                    .coordinateSpace(name: "library.row")
+                    .background(GeometryReader { g in Color.clear.preference(key: RowOriginKey.self, value: g.frame(in: .global).minX) })
+                    .onPreferenceChange(RowOriginKey.self) { origin in
+                        libraryDrag.rowMoved(originX: origin, rowWidth: width - 68 + 2 * Self.ringRoom)
+                        libraryRowOriginX = origin
+                    }
+                    .onPreferenceChange(RowFramesKey.self) { frames in cardFrames = frames; libraryDrag.framesChanged(frames); followDrag() }
+                    .onAppear {
+                        libraryDrag.onEdge = { way in row.scroll(by: CGFloat(way) * step) }   // near an end while dragging: one card that way
+                    }
+                    .animation(.spring(response: 0.34, dampingFraction: 0.8), value: games.map(\.id))
                     .onChange(of: padFocus.focused) { id in   // the focused card scrolls into the row's view
-                        guard let id, id.hasPrefix("card.") else { return }
-                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+                        // the AppKit scroll view directly: ScrollViewReader does not scroll a row inside a vertical ScrollView
+                        guard let id, id.hasPrefix("card."), let frame = cardFrames[String(id.dropFirst("card.".count))] else { return }
+                        row.reveal(minX: frame.minX, maxX: frame.maxX, margin: 24)
                     }
                 }
                     .overlay(alignment: .topLeading) {
@@ -253,6 +245,65 @@ extension LauncherView {
     func cardLook(_ game: LibraryGame) -> CoverLook {
         let building = m.running && activeBuildID == game.id
         return CoverLook(built: game.isReady || game.hasIOSBuild, building: building, fraction: building ? buildProgress : nil)
+    }
+
+    /// One card of the collection. A click selects its game; a long press picks the card up (the order becomes Custom, starting from
+    /// the row as it is), it grows a little while pressed, and the mouse then drags it along the row until the button comes up (#937).
+    func card(_ game: LibraryGame, width cardWidth: CGFloat, heroID: UUID?, rowWidth: CGFloat) -> some View {
+        let id = game.id.uuidString
+        let dragged = libraryDrag.id == id
+        let lift: CGFloat = dragged ? 1.06 : (libraryDrag.pressing == id ? 1.03 : 1)
+        let look = cardLook(game)
+        return VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                if let image = artwork[game.id] {
+                    ArtworkFill(image: image, focus: displayed(game).artwork.focus(for: .thumbnail))
+                } else {
+                    LauncherPalette.surface
+                    Image(systemName: "gamecontroller").font(.system(size: 30, weight: .light)).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: cardWidth, height: cardWidth / 1.8).clipped()
+            .coverLook(look, percent: look.building ? buildProgress.map { "\(Int($0 * 100))%" } : nil, tint: LauncherPalette.building)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(game.id == heroID ? LauncherPalette.cream : .clear, lineWidth: 2))
+            Text(game.name).font(.manrope(16, .semibold)).lineLimit(1)
+            status(game)
+            Capsule().fill(game.id == heroID ? LauncherPalette.cream : .clear).frame(height: 3).padding(.top, 4)
+        }
+        .frame(width: cardWidth, alignment: .leading).contentShape(Rectangle())
+        .rowCardGestures(id: id, drag: libraryDrag, tap: { library.selectedID = game.id }, pick: {
+            setLibraryOrder(.custom)
+            library.selectedID = game.id
+            libraryDrag.begin(id, frame: cardFrames[id], rowOriginX: libraryRowOriginX, rowWidth: rowWidth, onMove: { followDrag() })
+        })
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { library.selectedID = game.id }
+        .accessibilityAddTraits(game.id == heroID ? .isSelected : [])
+        .padTarget("card." + id, scope: "main", radius: 7) { if !launching { primaryAction(game) } }
+        .scaleEffect(lift)
+        .shadow(color: .black.opacity(dragged ? 0.5 : (libraryDrag.pressing == id ? 0.3 : 0)), radius: 16, y: 10)
+        .animation(.easeOut(duration: 0.25), value: lift)
+        .offset(x: libraryDrag.offset(for: id))
+        .zIndex(dragged ? 1 : 0)
+        .transaction { if dragged { $0.animation = nil } }   // under the pointer at once; the others spring aside
+        .background(GeometryReader { g in
+            Color.clear.preference(key: RowFramesKey.self, value: [id: g.frame(in: .named("library.row"))])
+        })
+    }
+
+    /// The dragged card takes one step toward the pointer once it has passed the next card; the library keeps it at once, and the
+    /// card takes its new place at once too, so it does not jump while the frames come back.
+    func followDrag() {
+        guard libraryDrag.active, let dragID = libraryDrag.id, let id = UUID(uuidString: dragID) else { return }
+        let shown = filteredGames.map(\.id)
+        let order = shown.map(\.uuidString)
+        let step = libraryDrag.step(order: order, frames: cardFrames)
+        guard step != 0, let at = order.firstIndex(of: dragID), order.indices.contains(at + step) else { return }
+        libraryDrag.stepped(into: cardFrames[order[at + step]], step: step, frame: cardFrames[dragID])
+        guard library.move(id, by: step, among: shown) else { libraryDrag.framesChanged(cardFrames); return }
+        RowDrag.haptic(.alignment)
     }
 
     /// A round button floating over the row's edge, centred on the artwork, shown while the row scrolls that way.

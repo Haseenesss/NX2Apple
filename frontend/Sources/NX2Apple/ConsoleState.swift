@@ -128,15 +128,16 @@ enum ConsoleStarting: Equatable {
 
 enum ConsoleSheet: Equatable {
     /// homeButtonHint: the system keeps the controller's Home button, so a game cannot be quit with it (#336, shown once).
-    /// menu: the console's own menu (Controllers, Button mapping, leaving console mode), on the Select-type button.
+    /// menu: the console's own menu (Library, Controllers, Settings, leaving console mode), on the Select-type button.
     /// mapping: what each controller button sends in games, for all games (the Controls page's controller layout).
     /// gamePad: a game's controller settings (its Controls rows: rumble, and its own button mapping), opened from its options.
-    /// general: the menu's General page, language: its display language list.
+    /// library: the menu's Library page (the library's switch, the way to the cloud saves). settings: its Settings page (the display
+    /// language, the app's update, the launcher after a game), language: the display language list.
     /// cloudSaves: each game's cloud save state and time, as a page of its own over the whole screen.
     /// confirmExit: "Leave console mode?", over what is open (the menu's Exit, or B on the home screen).
     /// confirmMapping: "Save changes?", leaving the button mapping after something on it changed.
     /// advanced: a game's advanced options. confirmReset: "Reset this game's options?". confirmUpdate: install the app's update, or restart into it.
-    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), general, language, cloudSaves, confirmExit, confirmMapping
+    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), library, settings, appearance, language, cloudSaves, confirmExit, confirmMapping
     case advanced(String), confirmReset(String), confirmUpdate
     /// The questions drawn in the middle of the screen, over what they were asked from.
     var isQuestion: Bool {
@@ -155,13 +156,15 @@ enum ConsoleSheet: Equatable {
     var scope: String {
         switch self {
         case .language: return "console.language"
+        case .appearance: return "console.appearance"
         case .confirmExit: return "console.confirmExit"
         case .confirmMapping: return "console.confirmMapping"
         case .advanced: return "console.advanced"
         case .confirmReset: return "console.confirmReset"
         case .confirmUpdate: return "console.confirmUpdate"
         case .cloudSaves: return "console.saves"   // ConsoleCloudSavesPage.scope
-        case .general: return "console.general"
+        case .library: return "console.library"
+        case .settings: return "console.settings"
         case .options: return "console.options"
         case .gamePad: return "console.gamePad"
         case .controllers: return "console.controllers"
@@ -200,6 +203,9 @@ struct ConsolePadLayout: Equatable {
     /// What each button sends in the layout chosen (for Auto, the one it picks for the controller connected now): only the
     /// buttons that send another, "none" for nothing.
     var sends: [String: String] = [:]
+    /// The Custom layout's buttons as stored, whichever layout is chosen: an edit there is kept at once (ControlLayout.setSends), so
+    /// going back to another layout does not undo it, and the mapping page asks about it on leaving.
+    var custom: [String: String] = [:]
     func output(_ button: String) -> String { sends[button] ?? button }
     func changed(_ button: String) -> Bool { output(button) != (baseline[button] ?? button) }
     /// Whether anything differs from what Reset goes back to: the standard layout, or for a game the mapping of all games.
@@ -223,7 +229,7 @@ struct ConsoleState {
     /// B confirms and A goes back in console mode's menus, as on a Switch (ConsoleButtons). Off: A confirms, as printed on Xbox and
     /// PlayStation controllers.
     var menuSwapAB = false
-    /// The General page's switches and the app's update, a build the desktop is running, and whether this Mac has the Home button setting.
+    /// The Settings page's switches and the app's update, a build the desktop is running, and whether this Mac has the Home button setting.
     var prefs = ConsolePrefs()
     var build: ConsoleBuild?
     var homeButtonAvailable = false
@@ -237,7 +243,8 @@ struct ConsoleState {
     /// Whether the mapping page has anything to save: the layout or its buttons, or the swap in menus.
     var mappingChanged: Bool {
         guard let origin = mappingOrigin else { return false }
-        return origin.mode != padLayout.mode || origin.sends != padLayout.sends || shownMenuSwapAB != menuSwapAB
+        let customEdited = mappingGameID == nil && mappingUndo.map { $0.pad != padLayout.custom } == true
+        return origin.mode != padLayout.mode || origin.sends != padLayout.sends || customEdited || shownMenuSwapAB != menuSwapAB
     }
     /// The cloud saves page's rows, read when it opens (ConsoleCloudSaves).
     var saveRows: [ConsoleSaveRow] = []
@@ -275,6 +282,30 @@ struct ConsoleState {
         guard arranging, let id = focusedGame?.id else { return }
         heldGameID = heldGameID == id ? nil : id
     }
+    /// A long press with the mouse: arranging starts if it has not, and that game is focused and picked up.
+    mutating func pickUp(_ id: String) {
+        guard games.contains(where: { $0.id == id }) else { return }
+        if !arranging { toggleArranging() }
+        guard arranging else { return }
+        focus(id)
+        heldGameID = id
+    }
+    /// The mouse let go: the game stays where it is and arranging goes on.
+    mutating func putDown() { heldGameID = nil }
+    /// The places the held game can take: its group (the games ready on this Mac, or the others), which it never leaves.
+    var heldRange: ClosedRange<Int>? {
+        guard let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }) else { return nil }
+        let ready = games[at].status == .ready
+        var lo = at, hi = at
+        while lo > 0, (games[lo - 1].status == .ready) == ready { lo -= 1 }
+        while hi < games.count - 1, (games[hi + 1].status == .ready) == ready { hi += 1 }
+        return lo...hi
+    }
+    /// The first game of the second group, where arranging draws the line between the groups; nil when there is one group.
+    var groupBoundaryID: String? {
+        guard let i = games.firstIndex(where: { $0.status != .ready }), i > 0 else { return nil }
+        return games[i].id
+    }
     /// Whether the held game can go one place left (-1) or right (+1): not past the row's end, nor out of its group.
     func canMoveHeld(_ step: Int) -> Bool {
         guard arranging, let id = heldGameID, let at = games.firstIndex(where: { $0.id == id }), games.indices.contains(at + step) else { return false }
@@ -305,14 +336,23 @@ struct ConsoleState {
         saveRows = rows
         sheets.append(.cloudSaves)
     }
-    mutating func openGeneral() {
-        guard !exited, startingGameID == nil, presentedSheet != .general else { return }
-        sheets.append(.general)
+    mutating func openLibrary() {
+        guard !exited, startingGameID == nil, presentedSheet != .library else { return }
+        sheets.append(.library)
     }
-    /// Pages and questions over a game's options or the General page, each once.
+    mutating func openSettings() {
+        guard !exited, startingGameID == nil, presentedSheet != .settings else { return }
+        sheets.append(.settings)
+    }
+    /// Pages and questions over a game's options or the Settings page, each once.
     mutating func push(_ sheet: ConsoleSheet) {
         guard !exited, startingGameID == nil, presentedSheet != sheet else { return }
         sheets.append(sheet)
+    }
+    /// Settings → Appearance: a page of its own, so the General page stays short as more of the look becomes a choice.
+    mutating func openAppearance() {
+        guard !exited, startingGameID == nil, presentedSheet != .appearance else { return }
+        sheets.append(.appearance)
     }
     mutating func openLanguage() {
         guard !exited, startingGameID == nil, presentedSheet != .language else { return }
@@ -405,11 +445,13 @@ struct ConsoleState {
     func openControllers()
     /// The console's menu (the Select-type button, or the menu button in the top bar).
     func openMenu()
-    /// The menu's General page, and its cloud saves page.
-    func openGeneral()
+    /// The menu's Library and Settings pages, and the cloud saves page (from Library).
+    func openLibrary()
+    func openSettings()
     func openCloudSaves()
-    /// The General page's display language list.
+    /// The Settings page's display language list.
     func openLanguage()
+    func openAppearance()
     /// "Leave console mode?": the menu's Exit asks first (B on the home screen does too, through `back`).
     func confirmExit()
     /// A short rumble at a game's rumble strength on every connected controller, from its controller settings.
@@ -423,8 +465,9 @@ struct ConsoleState {
     func askResetOptions(_ gameID: String)
     func resetOptions(_ gameID: String)
     func openOnDesktop(_ gameID: String)
-    /// The General page: a launcher switch, and the app's update (checked, or asked about and then installed or restarted into).
+    /// A launcher switch (on the Library, Controllers or Settings page), and the app's update (checked, or asked about and then installed or restarted into).
     func setPref(_ pref: ConsolePref, on: Bool)
+    func setBatteryStyle(_ style: ConsoleBatteryStyle)
     func appUpdateAction()
     func confirmAppUpdate()
     /// The system's Home button setting (macOS 27), from the Controllers page.
@@ -462,6 +505,11 @@ struct ConsoleState {
     func toggleArranging()
     func toggleHold()
     func moveHeld(_ step: Int)
+    /// The mouse: a long press picks a game up (and starts arranging), letting go puts it down.
+    func pickUp(_ gameID: String)
+    func putDown()
+    /// The row's order from the General page: Recent and Name, and Custom while an arranged order is in use.
+    func setLibraryOrder(_ order: LibraryOrder)
 }
 
 extension ConsoleDriver {
@@ -472,9 +520,11 @@ extension ConsoleDriver {
     func setMenuSwapAB(_ on: Bool) {}
     func finishMapping(save: Bool) {}
     func openGameMapping(_ gameID: String) {}
-    func openGeneral() {}
+    func openLibrary() {}
+    func openSettings() {}
     func openCloudSaves() {}
     func openLanguage() {}
+    func openAppearance() {}
     func confirmExit() {}
     func testRumble(gameID: String) {}
     func setMod(gameID: String, name: String, on: Bool) {}
@@ -485,6 +535,7 @@ extension ConsoleDriver {
     func resetOptions(_ gameID: String) {}
     func openOnDesktop(_ gameID: String) { exitToDesktop() }
     func setPref(_ pref: ConsolePref, on: Bool) {}
+    func setBatteryStyle(_ style: ConsoleBatteryStyle) {}
     func appUpdateAction() {}
     func confirmAppUpdate() {}
     func openSystemHomeSettings() {}
@@ -494,6 +545,9 @@ extension ConsoleDriver {
     func toggleArranging() {}
     func toggleHold() {}
     func moveHeld(_ step: Int) {}
+    func pickUp(_ gameID: String) {}
+    func putDown() {}
+    func setLibraryOrder(_ order: LibraryOrder) {}
 }
 
 /// Shared choice/range/toggle stepping for mouse, d-pad and keyboard. No settings store is touched.

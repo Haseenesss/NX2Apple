@@ -5,13 +5,13 @@ import NXModel
 
 /// What console mode takes from the desktop launcher, through the same stores and files the desktop uses, so a change here shows
 /// there and back: a game's mods (GameLibrary.setMod), its cheats (CheatFiles), its options back to the defaults (SavedChoices and
-/// the library), the General page's switches (the defaults Settings binds with @AppStorage), the app's update (AppUpdateStore), a
+/// the library), the Settings page's switches (the defaults Settings binds with @AppStorage), the app's update (AppUpdateStore), a
 /// build the desktop runs (BuildStore, as a chip) and the way to the desktop with a game selected. Nothing here builds or picks a
 /// folder: those stay on the desktop.
 extension LiveConsoleDriver {
     // MARK: Wiring
 
-    /// The session passes the launcher's update and build stores once (OnboardingRoot): their changes redraw the General page's
+    /// The session passes the launcher's update and build stores once (OnboardingRoot): their changes redraw the Settings page's
     /// update row and the build chip.
     func attach(updates: AppUpdateStore, builds: BuildStore) {
         appUpdates = updates
@@ -23,16 +23,18 @@ extension LiveConsoleDriver {
         refreshDesktop()
     }
 
-    /// The General page's switches, the update row, the build chip and the Home button setting, read again.
+    /// The Settings page's switches, the update row, the build chip and the Home button setting, read again.
     func refreshDesktop() {
         var prefs = state.prefs
         prefs.values = [.startInConsole: ConsolePrompt.startInConsole, .promptOnController: ConsolePrompt.enabled,
                         .returnAfterPlay: ReturnAfterPlay.enabled, .onlyBuilt: LibraryFilter.load() == .built]
+        prefs.batteryStyle = ConsoleBatteryStyle.saved
         if let updates = appUpdates {
             prefs.appVersion = updates.version
             prefs.update = Self.update(updates, buildRunning: builds?.running == true)
             prefs.updateStatus = updates.status
         }
+        prefs.order = LibraryOrder.load()
         if prefs != state.prefs { state.prefs = prefs }
         let build = builds.flatMap { Self.build($0, library: library, t: t) }
         if build != state.build { state.build = build }
@@ -162,7 +164,7 @@ extension LiveConsoleDriver {
         state.exitToDesktop()
     }
 
-    // MARK: General
+    // MARK: The launcher's switches
 
     func setPref(_ pref: ConsolePref, on: Bool) {
         let defaults = UserDefaults.standard
@@ -174,6 +176,12 @@ extension LiveConsoleDriver {
         }
         refreshDesktop()
         if pref == .onlyBuilt { refresh() }
+    }
+
+    /// Settings → Appearance: how the top bar's chips show the battery.
+    func setBatteryStyle(_ style: ConsoleBatteryStyle) {
+        UserDefaults.standard.set(style.rawValue, forKey: ConsoleBatteryStyle.defaultsKey)
+        refreshDesktop()
     }
 
     /// A on the update row: ask before installing or restarting, else check again.

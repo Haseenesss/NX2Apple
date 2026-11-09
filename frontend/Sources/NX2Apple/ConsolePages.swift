@@ -7,6 +7,8 @@ import NXLauncher
 struct ConsolePageHeader: View {
     let title: String
     var subtitle: String?
+    /// What the page is for, in a line or two, where there is no subtitle (the cloud saves).
+    var note: String?
     let compact: Bool
     let closeLabel: String
     let closeID: String
@@ -20,6 +22,9 @@ struct ConsolePageHeader: View {
                 Text(title).font(.manrope(compact ? 30 : 44, .bold)).tracking(-0.8).accessibilityAddTraits(.isHeader)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle).font(.manrope(compact ? 16 : 21, .semibold)).foregroundStyle(LauncherPalette.cream).lineLimit(1)
+                }
+                if let note, !note.isEmpty {
+                    Text(note).font(.manrope(compact ? 15 : 19)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 12)
@@ -157,13 +162,12 @@ struct ConsoleQuestion: View {
                     .padding(.horizontal, inset).padding(.bottom, compact ? 24 : 40)
                     .frame(maxWidth: .infinity, alignment: .leading)   // lined up with the title
                 }
+                .consoleScrollFade()
                 .onChange(of: pad.focused) { id in
                     guard let id, id.hasPrefix("console.option.") || id.hasPrefix("console.gamePad.") else { return }
                     withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) }
                 }
             }
-            Text(t("console.adjustHintSlider")).font(.manrope(compact ? 14 : 17)).foregroundStyle(.secondary)
-                .padding(.horizontal, inset).padding(.bottom, compact ? 20 : 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(LauncherPalette.background)
@@ -177,6 +181,9 @@ struct ConsoleQuestion: View {
                     .id("console.option." + setting.env)
             }
             if rumbles { test }
+            // the hint stays with the rows it is about, not at the far bottom of a mostly empty page
+            Text(t(game.controllerSettings.contains { $0.kind == "range" } ? "console.adjustHintSlider" : "console.adjustHint"))
+                .font(.manrope(compact ? 13 : 15)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
         }
     }
 
@@ -238,6 +245,17 @@ struct ConsoleQuestion: View {
     }
 }
 
+extension View {
+    /// The bottom of a console list fades out over its last points instead of ending in a cut where a footer or the screen's edge
+    /// follows (the top bar's controller chips fade the same way sideways).
+    func consoleScrollFade(_ height: CGFloat = 28) -> some View {
+        mask(VStack(spacing: 0) {
+            Rectangle()
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: height)
+        })
+    }
+}
+
 /// A build the desktop is running, in the top bar: the game, the stage, a thin bar for how far it is. Not a control: the build is
 /// the desktop's, and the game shows up in the row when it is done.
 struct ConsoleBuildChip: View {
@@ -263,7 +281,25 @@ struct ConsoleBuildChip: View {
         }
         .padding(.horizontal, 14).frame(height: compact ? 40 : 52)
         .frame(maxWidth: compact ? 200 : 360, alignment: .leading)
-        .background(.white.opacity(0.075), in: Capsule())
+        .consoleGlass(Capsule())
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The camera housing of a notched Mac, when console mode covers the whole screen: how far down the housing reaches (the screen's
+/// top safe area), and how wide a panel at the trailing edge can be and still start right of it.
+enum ConsoleNotch {
+    struct Room { var inset: CGFloat; var panelWidth: CGFloat? }
+    /// The housing is about 200 pt wide and centred; a panel from the trailing edge stays 24 pt clear of it.
+    static func room(inset: CGFloat, screenWidth: CGFloat, housingWidth: CGFloat = 200) -> Room {
+        guard inset > 0 else { return Room(inset: 0, panelWidth: nil) }
+        return Room(inset: inset, panelWidth: max(360, (screenWidth - housingWidth) / 2 - 24))
+    }
+    @MainActor static func current(screenWidth: CGFloat) -> Room {
+        let screen = NSApp.keyWindow?.screen ?? NSApp.mainWindow?.screen
+        let inset = screen?.safeAreaInsets.top ?? 0
+        // only when the window really covers the housing: a window below the menu bar has nothing above it
+        let covers = (NSApp.keyWindow ?? NSApp.mainWindow).map { w in (screen.map { w.frame.maxY >= $0.frame.maxY - 1 } ?? false) } ?? false
+        return room(inset: covers ? inset : 0, screenWidth: screenWidth)
     }
 }
