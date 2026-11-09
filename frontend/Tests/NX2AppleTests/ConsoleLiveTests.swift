@@ -121,6 +121,20 @@ import SwiftUI
         XCTAssertNil(driver.state.games.first?.visibleSettings.first { $0.env == "DM_FULLSCREEN" }, "the sheet does not offer what Play overrides")
     }
 
+    /// A game started from console mode keeps the time in library.json (lastPlayed), which orders the home row.
+    func testPlayRecordsLastPlayedInTheLibrary() async throws {
+        let (driver, library, _) = try makeDriver()
+        let id = try XCTUnwrap(driver.state.games.first?.id)
+        XCTAssertNil(library.games.first?.lastPlayed)
+        driver.play(id)
+        for _ in 0..<50 where driver.state.starting != .opening { try await Task.sleep(nanoseconds: 20_000_000) }
+        let played = try XCTUnwrap(library.games.first?.lastPlayed)
+        XCTAssertLessThan(abs(played.timeIntervalSinceNow), 10)
+        XCTAssertNotNil(driver.state.games.first?.lastPlayed)
+        let reread = GameLibrary(file: temporary.appendingPathComponent("library.json"))
+        XCTAssertEqual(reread.games.first?.lastPlayed?.timeIntervalSinceReferenceDate ?? 0, played.timeIntervalSinceReferenceDate, accuracy: 0.001)
+    }
+
     func testStartingEndsWhenTheGameQuits() async throws {
         let (driver, _, _) = try makeDriver()
         let id = try XCTUnwrap(driver.state.games.first?.id)
