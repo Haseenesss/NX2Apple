@@ -907,6 +907,91 @@ import NXModel
         XCTAssertEqual(ConsoleGlyphs.neutral.shoulder("R"), .letter("R"))
     }
 
+    /// The right stick moves the focus as the D-pad and the left stick do; the D-pad wins, then the stick pushed further.
+    func testRightStickMovesLikeTheDPad() {
+        func held(_ input: LauncherGamepad.RawPadInput) -> [LauncherGamepad.Action] {
+            LauncherGamepad.states(controller: "c", input: input, splitJoyCon: false)[0].state.filter { $0.1 }.map(\.2)
+        }
+        XCTAssertEqual(held(.init(rightStickY: -0.9)), [.down])
+        XCTAssertEqual(held(.init(rightStickX: 0.9)), [.right])
+        XCTAssertEqual(held(.init(rightStickY: 0.3)), [])   // inside the dead zone
+        XCTAssertEqual(held(.init(leftStickX: -0.6, rightStickX: 0.9)), [.right])
+        XCTAssertEqual(held(.init(dpadY: 1, rightStickY: -0.9)), [.up])
+    }
+
+    /// The library grid scrolls only when the focused card is not all in view, and then just far enough to show it whole.
+    @MainActor func testLibraryGridRevealsACardJustIntoView() {
+        final class Flipped: NSView { override var isFlipped: Bool { true } }
+        let view = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 800))
+        view.documentView = Flipped(frame: NSRect(x: 0, y: 0, width: 400, height: 3000))
+        let scroller = GridScroller(); scroller.scrollView = view
+        func reveal(_ minY: CGFloat, _ height: CGFloat = 300) -> CGFloat? { scroller.reveal(minY: minY, maxY: minY + height, top: 12, bottom: 28, animated: false) }
+        var top: CGFloat { view.contentView.bounds.minY }
+        XCTAssertNil(reveal(100), "in view: no scroll")
+        XCTAssertNil(reveal(800 - 28 - 300), "its bottom on the fade's edge: still in view")
+        XCTAssertEqual(reveal(700), 228, "below: its bottom just clear of the fade")
+        XCTAssertEqual(top, 228)
+        XCTAssertEqual(reveal(-100), -112, "above: its top 12 under the top edge")
+        XCTAssertEqual(top, 116)
+        XCTAssertEqual(reveal(900, 790), 888, "taller than the room: from its top")
+        XCTAssertEqual(top, 1004)
+        XCTAssertEqual(reveal(-5000), -1004, "not above the document's top")
+        XCTAssertEqual(reveal(5000), 3000 - 800, "not past its end")
+    }
+
+    /// In a window: the library grid stays put while the focused card is in view, scrolls just far enough when the focus goes
+    /// below or above it, and the right stick moves the focus as the D-pad does. NX_CONSOLE_SHOTS_DIR keeps a capture of each step.
+    @MainActor func testLibraryGridFollowsTheFocusInAWindow() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
+        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        let shots = ProcessInfo.processInfo.environment["NX_CONSOLE_SHOTS_DIR"].map { URL(fileURLWithPath: $0) }
+        var step = 0
+        func settle() {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4)); host.layoutSubtreeIfNeeded()
+            guard let shots, let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            step += 1
+            try? rep.representation(using: .png, properties: [:])?.write(to: shots.appendingPathComponent(String(format: "grid-follow-%02d.png", step)))
+        }
+        func press(_ raw: LauncherGamepad.RawPadInput) {   // through the controller's own mapping, as a press and a release
+            for state in [raw, LauncherGamepad.RawPadInput()] {
+                for action in LauncherGamepad.states(controller: "c", input: state, splitJoyCon: false)[0].state where action.1 { gamepad.perform(action.2) }
+            }
+        }
+        func allViews(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(allViews) }
+        func gridOffset() -> CGFloat? {   // the tallest vertical scroll view is the grid's
+            allViews(host).compactMap { $0 as? NSScrollView }.filter { ($0.documentView?.frame.height ?? 0) > $0.contentSize.height + 1 }
+                .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }?.documentVisibleRect.minY
+        }
+        if let shots { try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true) }
+        settle()
+        driver.openLibrary(); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid)
+        let columns = ConsoleLibraryGrid<MockConsoleDriver>.columns(width: 1280, compact: false)
+        XCTAssertGreaterThan(driver.state.libraryGames.count, columns * 3, "more rows than the page shows")
+        let top = try XCTUnwrap(gridOffset())
+        press(.init(rightStickX: 1)); settle()
+        XCTAssertEqual(try XCTUnwrap(gridOffset()), top, accuracy: 0.5, "a card in view: the grid stays put")
+        var offsets = [top]
+        for _ in 0..<3 {
+            press(.init(rightStickY: -1)); settle()   // down with the right stick
+            offsets.append(try XCTUnwrap(gridOffset()))
+        }
+        XCTAssertGreaterThan(offsets.last!, top, "the focus went below the view: the grid followed it")
+        XCTAssertEqual(offsets, offsets.sorted(), "down only scrolls down")
+        let low = offsets.last!
+        press(.init(dpadY: 1)); settle()   // up one row: that card is in view already
+        let afterUp = try XCTUnwrap(gridOffset())
+        XCTAssertLessThanOrEqual(afterUp, low)
+        for _ in 0..<3 { press(.init(dpadY: 1)); settle() }
+        XCTAssertEqual(try XCTUnwrap(gridOffset()), top, accuracy: 0.5, "back on the first row, the grid is back at its top")
+    }
+
     /// A game being built neither starts nor explains on A: its app is still being written (the tile shakes, ConsoleGameRow).
     @MainActor func testABuildingGameNeitherStartsNorExplains() {
         let driver = MockConsoleDriver(scenario: .full, animated: false)

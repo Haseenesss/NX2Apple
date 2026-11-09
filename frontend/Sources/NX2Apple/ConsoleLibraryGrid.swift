@@ -7,7 +7,8 @@ import NXLauncher
 /// save's dot (ConsoleSaveDot): four across on a TV, three in a Mac window, two in a narrow one. The focus stays in the grid: A on a
 /// game takes it back to the home screen, first in the row and focused (ConsoleState.pickFromLibrary); Y opens its options, ZL and
 /// ZR go to the first or last game, B goes back home with the focus on the library tile. The grid does not go round at its edges. R3 (or F) moves the focus to the chips (`displayMode`): left and right between
-/// them, A picks, B or R3 gives the focus back to the game it was on.
+/// them, A picks, B or R3 gives the focus back to the game it was on. The grid follows the focus: it scrolls only when the focused
+/// game's card (its cover and its name) is not all in view, and then just far enough to show the whole card (`reveal`).
 @MainActor struct ConsoleLibraryGrid<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver
     let lang: Lang
@@ -18,6 +19,8 @@ import NXLauncher
     var displayMode = false
     @EnvironmentObject private var pad: PadFocus
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where each card and the scroll view are, read as they scroll: a plain box, so scrolling draws nothing again.
+    @State private var geometry = GridGeometry()
 
     static var scope: String { "console.grid" }
     private var scope: String { Self.scope }
@@ -30,34 +33,39 @@ import NXLauncher
         guard let target, target.hasPrefix("console.grid.game.") else { return nil }
         return String(target.dropFirst("console.grid.game.".count))
     }
-    /// The scroll position of a game's cell (its cover and its name), apart from the cover's pad target id.
-    static func cellID(_ target: String) -> String { "console.grid.cell." + target }
     static var firstChip: String { "console.grid.order." + LibraryOrder.recent.rawValue }
 
     /// Four across on a screen as wide as a TV's, two in a narrow window, three otherwise.
     static func columns(width: CGFloat, compact: Bool) -> Int { compact ? 2 : width >= 1600 ? 4 : 3 }
     static func spacing(compact: Bool) -> CGFloat { compact ? 16 : 28 }
+    /// The scroll view's fade at its bottom edge (consoleScrollFade): a card is not in view until it is clear of it.
+    static var fade: CGFloat { 28 }
+    /// Room kept above a card scrolled down to, for its focus ring.
+    static var topRoom: CGFloat { 12 }
+    private static var viewport: String { "console.grid.viewport" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header.padding(.horizontal, inset).padding(.top, compact ? 28 : 48).padding(.bottom, compact ? 16 : 28)
-            ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    if state.libraryGames.isEmpty {
-                        Text(t("console.empty")).font(.manrope(compact ? 18 : 22)).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, inset).padding(.top, 24)
-                    } else {
-                        grid.padding(.horizontal, inset).padding(.vertical, 12)
-                    }
+            ScrollView(.vertical, showsIndicators: false) {
+                if state.libraryGames.isEmpty {
+                    Text(t("console.empty")).font(.manrope(compact ? 18 : 22)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, inset).padding(.top, 24)
+                } else {
+                    // the last row can scroll clear of the bottom fade
+                    grid.padding(.horizontal, inset).padding(.top, Self.topRoom).padding(.bottom, Self.fade)
+                        .background(GridScroller.Probe(scroller: geometry.scroller))
                 }
-                .consoleScrollFade()
-                .opacity(displayMode ? 0.55 : 1)
-                .onChange(of: pad.focused) { id in
-                    guard let id, Self.gameID(of: id) != nil else { return }
-                    withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(Self.cellID(id), anchor: .center) }
-                }
-                .onAppear { if let id = pad.focused, Self.gameID(of: id) != nil { proxy.scrollTo(Self.cellID(id), anchor: .center) } }
             }
+            .coordinateSpace(name: Self.viewport)
+            .onPreferenceChange(GridCellFrames.self) { geometry.cells = $0 }
+            .consoleScrollFade(Self.fade)
+            .opacity(displayMode ? 0.55 : 1)
+            .onChange(of: pad.focused) { id in
+                guard let id, Self.gameID(of: id) != nil else { return }
+                reveal(id)
+            }
+            .onAppear { if let id = pad.focused, Self.gameID(of: id) != nil { DispatchQueue.main.async { reveal(id) } } }
             hints.padding(.horizontal, inset).padding(.bottom, compact ? 20 : 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -169,7 +177,16 @@ import NXLauncher
         .accessibilityElement(children: .combine)
         .accessibilityLabel(ConsoleSaveDot.accessibilityLabel(game, lang: lang))
         .accessibilityHint(t("console.grid.pick"))
-        .id(Self.cellID(id))
+        .background(GeometryReader { g in
+            Color.clear.preference(key: GridCellFrames.self, value: [id: g.frame(in: .named(Self.viewport))])
+        })
+    }
+
+    /// Scrolls the focused game's card into view, or not at all when it is. The AppKit scroll view is moved directly
+    /// (GridScroller): ScrollViewReader's scrollTo did not move this grid.
+    private func reveal(_ id: String) {
+        guard let frame = geometry.cells[id] else { return }
+        geometry.scroller.reveal(minY: frame.minY, maxY: frame.maxY, top: Self.topRoom, bottom: Self.fade, animated: !reduceMotion)
     }
 
     // MARK: Hints
@@ -206,6 +223,70 @@ import NXLauncher
         .frame(minHeight: compact ? 36 : 48)
         .accessibilityElement(children: .combine)
     }
+}
+
+/// The library grid's cards and scroll view, as last laid out (ConsoleLibraryGrid.reveal reads them on a focus move).
+private final class GridGeometry {
+    var cells: [String: CGRect] = [:]
+    let scroller = GridScroller()
+}
+
+/// The library grid's AppKit scroll view, moved by the least that shows a card whole (RowScroller does the same for the home row).
+final class GridScroller {
+    weak var scrollView: NSScrollView?
+
+    /// Scrolls so `minY...maxY` (where the card is now, in the scroll view's own coordinates) is in view with `top` above it and
+    /// `bottom` below it. A card taller than that shows from its top. Returns how far the grid moves, nil when it does not.
+    @discardableResult
+    func reveal(minY: CGFloat, maxY: CGFloat, top: CGFloat, bottom: CGFloat, animated: Bool = true) -> CGFloat? {
+        guard let view = scrollView, let document = view.documentView else { return nil }
+        let clip = view.contentView, height = clip.bounds.height
+        let delta: CGFloat
+        if minY < top - 0.5 || maxY - minY > height - top - bottom { delta = minY - top }
+        else if maxY > height - bottom + 0.5 { delta = maxY - height + bottom }
+        else { return nil }
+        // the visible top, measured down from the document's top whichever way the document view is drawn
+        let end = max(0, document.frame.height - height)
+        let shown = document.isFlipped ? clip.bounds.minY : end - clip.bounds.minY
+        let target = min(max(0, shown + delta), end)
+        guard abs(target - shown) > 0.5 else { return nil }
+        let y = document.isFlipped ? target : end - target
+        // a window not on screen does not run the animation (an offscreen test's): the grid goes there at once
+        if animated, view.window?.occlusionState.contains(.visible) == true {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                clip.animator().setBoundsOrigin(NSPoint(x: clip.bounds.minX, y: y))
+            }
+        } else {
+            clip.setBoundsOrigin(NSPoint(x: clip.bounds.minX, y: y))
+        }
+        view.reflectScrolledClipView(clip)
+        return target - shown
+    }
+
+    /// Hands the NSScrollView around this background view to the scroller once it is in a window.
+    struct Probe: NSViewRepresentable {
+        let scroller: GridScroller
+        final class View: NSView {
+            var scroller: GridScroller?
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                DispatchQueue.main.async { [weak self] in self?.scroller?.scrollView = self?.enclosingScrollView }
+            }
+        }
+        func makeNSView(context: Context) -> View { let view = View(); view.scroller = scroller; return view }
+        func updateNSView(_ view: View, context: Context) {
+            view.scroller = scroller
+            DispatchQueue.main.async { if let found = view.enclosingScrollView { scroller.scrollView = found } }
+        }
+    }
+}
+
+/// Each card's frame in the scroll view's own space (where it is on screen now), by its cover's pad target id.
+private struct GridCellFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { $1 } }
 }
 
 extension ConsoleGlyphs {

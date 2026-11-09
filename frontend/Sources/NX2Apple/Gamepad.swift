@@ -7,7 +7,7 @@ import os
 /// back, X opens the selected game's launch options and Y opens the Manage menu. On an Xbox or PlayStation controller A is the
 /// bottom button (the cross), on a Nintendo-layout controller it is the one on the right, as its player expects. This is the
 /// menus only: what a game receives is the Controls page's layout (By label or By position, #70), which this does not change.
-/// The D-pad or left stick moves (held, it repeats), L and R switch the pages. Input counts only while the launcher is the active app: a game it
+/// The D-pad or either stick moves (held, it repeats), L and R switch the pages. Input counts only while the launcher is the active app: a game it
 /// started is in front then, and GameController gives a controller's input to the app in front, so the launcher never
 /// acts behind a running game.
 final class LauncherGamepad: ObservableObject {
@@ -46,8 +46,9 @@ final class LauncherGamepad: ObservableObject {
     /// counter-clockwise and Right Joy-Con (`.R`) is rotated 90° clockwise so launcher and console mode match sideways play (#740).
     static func states(controller: String, input: RawPadInput, splitJoyCon: Bool) -> [(controller: String, state: [(String, Bool, Action)])] {
         guard splitJoyCon else {
-            let x = input.dpadX != 0 ? input.dpadX : input.leftStickX
-            let y = input.dpadY != 0 ? input.dpadY : input.leftStickY
+            // the D-pad first, then whichever stick is pushed further: the right stick moves the focus as the left one does
+            let x = input.dpadX != 0 ? input.dpadX : Self.further(input.leftStickX, input.rightStickX)
+            let y = input.dpadY != 0 ? input.dpadY : Self.further(input.leftStickY, input.rightStickY)
             return [(controller, [
                 ("left", x < -0.5, .left), ("right", x > 0.5, .right), ("up", y > 0.5, .up), ("down", y < -0.5, .down),
                 ("a", input.a, .a), ("b", input.b, .b),   // by label, see `face`
@@ -74,6 +75,7 @@ final class LauncherGamepad: ObservableObject {
         ]
         return [(controller + ".L", leftState), (controller + ".R", rightState)]
     }
+    private static func further(_ a: Float, _ b: Float) -> Float { abs(b) > abs(a) ? b : a }
     /// The GameController button an action reads, in one place (the glyphs of the console mode follow it). GameController names
     /// the face buttons by label: buttonA is the bottom of Apple's diamond (GCExtendedGamepad.h), which is A on an Xbox
     /// controller and the cross on a DualSense, and a Nintendo-layout controller reports the button printed A (on the right) as
