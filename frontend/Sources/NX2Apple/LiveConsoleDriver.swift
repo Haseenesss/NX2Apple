@@ -158,13 +158,14 @@ struct ConsolePadSnapshot: Equatable {
     func refresh() {
         let focus = state.focusedGameID
         let heroes = Dictionary(state.games.compactMap { g in g.hero.map { (g.id, ($0, g.heroFocus)) } }) { a, _ in a }   // kept across a refresh: no flash
+        let saves = Dictionary(state.games.compactMap { g in g.save.map { (g.id, $0) } }) { a, _ in a }   // the covers' dots, until read again
         let ordered = LibraryOrder.load().arrange(library.games)   // the desktop row's order (#937)
         let building = buildingGameID, filter = LibraryFilter.load()
         let shown = ordered.filter { filter.includes($0, building: building) }   // the desktop's filter, the game being built too
-        let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0, building: $0.id == building); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); return g })
+        let games = ConsoleGame.readyFirst(shown.map { var g = consoleGame($0, building: $0.id == building); (g.hero, g.heroFocus) = heroes[g.id].map { ($0.0, $0.1) } ?? (nil, .center); g.save = g.status == .ready ? saves[g.id] : nil; return g })
         state.games = games
         state.focusedGameID = games.contains { $0.id == focus } ? focus : (library.selected.map { $0.id.uuidString }.flatMap { id in games.contains { $0.id == id } ? id : nil } ?? games.first?.id)
-        state.time = Date(); loadHero()
+        state.time = Date(); loadHero(); loadSaveStates()
         reloadOpenDetails()   // the open options page keeps its mods, cheats, save and Reset
     }
 
@@ -196,7 +197,7 @@ struct ConsolePadSnapshot: Equatable {
                            status: Self.status(of: game, brokenMessage: t("console.broken"), building: building), building: building,
                            settings: settings, values: values,
                            mapsButtons: game.isReady && SavedChoices.appReadsControllerMappings(app: game.appPath)
-                               && game.controllerSavingEnabled(environment: game.launchOptions))
+                               && game.controllerSavingEnabled(environment: game.launchOptions), lastPlayed: game.lastPlayed)
     }
 
     /// The library's game behind a console game (LiveConsoleDriver+Mapping.swift reads its own button mapping).
@@ -254,6 +255,8 @@ struct ConsolePadSnapshot: Equatable {
     func reloadCovers() { covers = [:]; for i in state.games.indices { state.games[i].hero = nil }; refresh() }
 
     func focus(_ gameID: String) { state.focus(gameID); loadHero() }
+    func focusLibraryTile() { state.focusLibraryTile() }
+    func pickFromLibrary(_ gameID: String) { state.pickFromLibrary(gameID); loadHero() }
 
     func play(_ gameID: String) {
         state.play(gameID)
@@ -278,6 +281,7 @@ struct ConsolePadSnapshot: Equatable {
                     self.launchedPID = pid
                     self.launchedGame = game
                     if let pid { GameReturnWatcher.shared.didStart(pid: pid) { [weak self] in self?.library.markPlayed(game.id); self?.gameDidTerminate(pid: pid) } }   // the launcher's one watcher and its switch (ReturnAfterPlay.swift)
+                    self.state.recordPlayed(gameID)   // the home row: the game picked on the library page no longer leads it
                     self.state.starting = .opening
                     self.timeoutTask?.cancel()
                     self.timeoutTask = Task { [weak self] in

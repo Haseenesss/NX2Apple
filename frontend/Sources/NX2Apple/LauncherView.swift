@@ -654,6 +654,8 @@ struct LauncherView: View {
             page = pages[(at + (action == .l ? pages.count - 1 : 1)) % pages.count]
         case .y, .plus, .select:   // Y is the Manage menu: ManagePad.route opened it above
             return
+        case .zl, .zr, .rs:
+            return
         case .b:
             return
         }

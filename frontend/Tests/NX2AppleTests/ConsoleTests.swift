@@ -25,10 +25,10 @@ import NXModel
         driver.focus("missing")
         XCTAssertEqual(driver.state.focusedGameID, "demo.2")
         var state = driver.state
-        state.moveFocus(-100)
+        state.focus("demo.0")
+        XCTAssertFalse(state.moveFocus(-1, repeat: true), "a held left stops at the first game")
         XCTAssertEqual(state.focusedGame?.id, "demo.0")
-        state.moveFocus(100)
-        XCTAssertEqual(state.focusedGame?.id, "demo.9", "the games this Mac cannot play come last")
+        XCTAssertEqual(driver.state.games.last?.id, "demo.9", "the games this Mac cannot play come last")
         XCTAssertEqual(MockConsoleDriver(scenario: .few, animated: false).state.games.count, 2)
         var empty = MockConsoleDriver(scenario: .empty, animated: false).state
         empty.moveFocus(1)
@@ -244,7 +244,7 @@ import NXModel
         let sizes: [(String, CGFloat, CGFloat)] = [("tv", 1920, 1080), ("mac", 1280, 800), ("compact", 390, 844)]
         for lang in CaptureLanguage.all([.en, .zh]) {
             for (name, width, height) in sizes {
-                for screen in ["full", "few", "empty", "controllers", "controllersMixed", "mixedHome", "controllerDesktop", "controllerDesktopSplit", "connectedToast", "starting", "options", "needsBuild", "needsData", "broken", "desktop", "prompt", "homeHint", "menu", "mapping", "mappingCustom", "mappingRow", "gamePad", "gameMapping", "cloudSaves", "library", "general", "language", "appearance", "confirmExit", "menuExit", "confirmMapping", "advanced", "confirmReset", "confirmUpdate"] {
+                for screen in ["full", "few", "empty", "controllers", "controllersMixed", "mixedHome", "controllerDesktop", "controllerDesktopSplit", "connectedToast", "starting", "options", "needsBuild", "needsData", "broken", "desktop", "prompt", "homeHint", "menu", "mapping", "mappingCustom", "mappingRow", "gamePad", "gameMapping", "cloudSaves", "home-tile", "libraryGrid", "general", "language", "appearance", "confirmExit", "menuExit", "confirmMapping", "advanced", "confirmReset", "confirmUpdate"] {
                     let driver = MockConsoleDriver(scenario: MockConsoleDriver.Scenario(rawValue: screen) ?? (screen == "mixedHome" || screen == "controllerDesktop" || screen == "controllerDesktopSplit" || screen == "connectedToast" ? .controllersMixed : .full), lang: lang, animated: false)
                     switch screen {
                     case "mixedHome": driver.back()
@@ -263,8 +263,9 @@ import NXModel
                     case "mappingCustom": driver.openMapping(); driver.setPadSends(button: "A", to: "B"); driver.setPadSends(button: "ZR", to: "none")
                     case "mappingRow": driver.openMapping(); driver.setPadMode(.byLabel); driver.openMappingRow("A")
                     case "gamePad": driver.openOptions("demo.0"); driver.openGamePad("demo.0")
-                    case "cloudSaves": driver.openMenu(); driver.openLibrary(); driver.openCloudSaves()
-                    case "library": driver.openMenu(); driver.openLibrary()
+                    case "cloudSaves": driver.openLibrary(); driver.openCloudSaves()
+                    case "home-tile": driver.focusLibraryTile()
+                    case "libraryGrid": driver.openLibrary()
                     case "general": driver.openMenu(); driver.openSettings()
                     case "language": driver.openMenu(); driver.openSettings(); driver.openLanguage()
                     case "appearance": driver.openMenu(); driver.openSettings(); driver.openAppearance()
@@ -345,9 +346,9 @@ import NXModel
             return rep
         }
         try settle()
-        let first = try XCTUnwrap(driver.state.games.first).id, last = try XCTUnwrap(driver.state.games.last).id
+        let first = try XCTUnwrap(driver.state.homeGames.first).id
         let start = try snapshot("clip-1-start")
-        driver.focus(last); try settle(after: start)
+        driver.focusLibraryTile(); try settle(after: start)   // the row's far end: the library tile after its last game
         let atEnd = try snapshot("clip-2-last")
         driver.focus(first); try settle(after: atEnd)
         let rep = try snapshot("clip-3-back")

@@ -13,7 +13,24 @@ extension LiveConsoleDriver {
     }
     func openMenu() { state.openMenu() }
     /// The switches are read again first: Settings on the desktop may have changed them since.
-    func openLibrary() { refreshDesktop(); state.openLibrary() }
+    func openLibrary() { refreshDesktop(); state.openLibrary(); loadSaveStates() }
+
+    /// The covers' cloud save dots: each built game's row (ConsoleCloudSaves.row), read off the main thread, put on the games still listed.
+    func loadSaveStates() {
+        let inputs = ConsoleCloudSaves.inputs(library: library)
+        guard !inputs.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let rows = ConsoleCloudSaves.rows(inputs)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    for row in rows {
+                        if let i = self.state.games.firstIndex(where: { $0.id == row.id }), self.state.games[i].save != row { self.state.games[i].save = row }
+                    }
+                }
+            }
+        }
+    }
     func openSettings() { refreshDesktop(); state.openSettings() }
     func openLanguage() { state.openLanguage() }
     func openAppearance() { refreshDesktop(); state.openAppearance() }

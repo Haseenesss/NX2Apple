@@ -3,10 +3,11 @@ import SwiftUI
 
 /// A window-local keyboard adapter. A local monitor keeps navigation working after a click gives a
 /// native button first-responder status; it never consumes another window's keys or global shortcuts.
+/// `perform` gets the input and whether it is the key's auto-repeat (NSEvent.isARepeat), not a new press.
 struct ConsoleKeyboardInput: NSViewRepresentable {
-    var perform: (ConsoleInput) -> Void
+    var perform: (ConsoleInput, Bool) -> Void
     final class KeyView: NSView {
-        var perform: (ConsoleInput) -> Void = { _ in }
+        var perform: (ConsoleInput, Bool) -> Void = { _, _ in }
         private var monitor: Any?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -16,7 +17,7 @@ struct ConsoleKeyboardInput: NSViewRepresentable {
                 guard let self, let window = self.window, event.window === window, window.isKeyWindow,
                       NSApp.isActive, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                       let input = Self.input(event) else { return event }
-                self.perform(input)
+                self.perform(input, event.isARepeat)
                 return nil
             }
         }
@@ -29,10 +30,13 @@ struct ConsoleKeyboardInput: NSViewRepresentable {
             case 126: return .up
             case 36, 76, 49: return .activate
             case 53: return .back
+            case 115: return .first         // Home
+            case 119: return .last          // End
             default:
                 switch event.charactersIgnoringModifiers?.lowercased() {
                 case "y", "o": return .options
                 case "m", "+", "=": return .menu
+                case "f": return .displayMode
                 case "r": return .arrange
                 default: return nil
                 }

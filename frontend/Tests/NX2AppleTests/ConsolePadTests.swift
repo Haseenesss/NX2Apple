@@ -71,7 +71,7 @@ import NXModel
     func testGamepadActionsMapToConsoleInputs() {
         let expected: [(LauncherGamepad.Action, ConsoleInput?)] = [
             (.left, .left), (.right, .right), (.up, .up), (.down, .down), (.a, .activate), (.b, .back),
-            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, .arrange)]
+            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, .arrange), (.zl, .first), (.zr, .last), (.rs, .displayMode)]
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
     }
 
@@ -263,7 +263,7 @@ import NXModel
         gamepad.perform(.plus); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "the menu button opens the menu")
         gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.presentedSheet, .library, "the menu's first row is Library")
+        XCTAssertEqual(driver.state.presentedSheet, .controllers, "the menu's first row is Controllers (the library is the home row's tile)")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "B goes back to the menu")
         gamepad.perform(.plus); settle()
@@ -491,7 +491,7 @@ import NXModel
         for (sizeName, width, height) in [("1920", CGFloat(1920), CGFloat(1080)), ("compact", 390, 844)] {
             for (name, scenario, family) in [("home", MockConsoleDriver.Scenario.full, ConsoleGlyphs.Family.xbox), ("home-dualsense", .full, .playStation), ("home-keyboard", .full, .keyboard),
                                              ("controllers", .controllersMixed, .xbox), ("home-4pads", .controllersMixed, .xbox), ("controllers-wired", .controllers, .xbox), ("options", .full, .xbox), ("empty", .empty, .xbox), ("starting", .starting, .xbox),
-                                             ("menu", .full, .xbox), ("library", .full, .xbox), ("general", .full, .xbox), ("appearance", .full, .xbox), ("update", .full, .xbox), ("leave", .full, .xbox),
+                                             ("home-tile", .full, .xbox), ("menu", .full, .xbox), ("libraryGrid", .full, .xbox), ("general", .full, .xbox), ("appearance", .full, .xbox), ("update", .full, .xbox), ("leave", .full, .xbox),
                                              ("mapping", .full, .xbox), ("mapping-button", .full, .xbox), ("mapping-save", .full, .xbox),
                                              ("game-controller", .full, .xbox), ("game-mapping", .full, .xbox), ("advanced", .full, .xbox),
                                              ("reset", .full, .xbox), ("cloud-saves", .full, .xbox), ("not-built", .full, .xbox)] {
@@ -500,7 +500,8 @@ import NXModel
                 if name == "home-4pads" { driver.back() }
                 switch name {
                 case "menu": driver.openMenu()
-                case "library": driver.openMenu(); driver.openLibrary()
+                case "home-tile": driver.focusLibraryTile()
+                case "libraryGrid": driver.openLibrary()
                 case "general": driver.openMenu(); driver.openSettings()
                 case "appearance": driver.openMenu(); driver.openSettings(); driver.openAppearance()
                 case "update": driver.openMenu(); driver.openSettings(); driver.appUpdateAction()
@@ -512,7 +513,7 @@ import NXModel
                 case "game-mapping": driver.openOptions("demo.0"); driver.openGamePad("demo.0"); driver.openGameMapping("demo.0"); driver.setPadSends(button: "ZR", to: "none")
                 case "advanced": driver.openOptions("demo.0"); driver.openAdvanced("demo.0")
                 case "reset": driver.openOptions("demo.0"); driver.setOption(gameID: "demo.0", setting: "DM_VSYNC", value: "0"); driver.askResetOptions("demo.0")
-                case "cloud-saves": driver.openMenu(); driver.openLibrary(); driver.openCloudSaves()
+                case "cloud-saves": driver.openLibrary(); driver.openCloudSaves()
                 case "not-built": driver.focus("demo.3"); driver.play("demo.3")
                 default: break
                 }
@@ -682,6 +683,313 @@ import NXModel
         for lang in [Lang.en, .zh] {
             try shot(AnyView(ConsoleConnectionPrompt(lang: lang, enterConsole: {}, dismissPrompt: {}).environmentObject(PadFocus()).preferredColorScheme(.dark)), "prompt-\(lang.code)", 900, 500)
         }
+    }
+
+    // MARK: The home row and the library page
+
+    /// Left and right along the home row, the library tile last: one place inside the row; at either end a held direction stops
+    /// (false, so the view leans the tile), a new press goes round (first game ↔ tile).
+    @MainActor func testHomeRowMoveFocusRules() throws {
+        var state = MockConsoleDriver(scenario: .full, animated: false).state
+        let row = state.homeGames.map(\.id)
+        XCTAssertEqual(row.count, 10)
+        // in the middle: one place, held or not
+        state.focus(row[3])
+        XCTAssertTrue(state.moveFocus(1)); XCTAssertEqual(state.focusedGameID, row[4])
+        XCTAssertTrue(state.moveFocus(-1, repeat: true)); XCTAssertEqual(state.focusedGameID, row[3])
+        // the last game: right goes on to the tile, held or not
+        state.focus(row[9])
+        XCTAssertTrue(state.moveFocus(1, repeat: true)); XCTAssertTrue(state.libraryTileFocused)
+        XCTAssertNil(state.homeFocusedGame)
+        // held at either end: it stops
+        XCTAssertFalse(state.moveFocus(1, repeat: true)); XCTAssertTrue(state.libraryTileFocused, "a held right stops on the tile")
+        state.focus(row[0])
+        XCTAssertFalse(state.moveFocus(-1, repeat: true)); XCTAssertEqual(state.focusedGameID, row[0], "a held left stops on the first game")
+        XCTAssertFalse(state.libraryTileFocused)
+        // a new press at either end: it goes round
+        XCTAssertTrue(state.moveFocus(-1)); XCTAssertTrue(state.libraryTileFocused, "left on the first game goes to the tile")
+        XCTAssertTrue(state.moveFocus(1)); XCTAssertFalse(state.libraryTileFocused, "right on the tile goes to the first game")
+        XCTAssertEqual(state.focusedGameID, row[0])
+        // nothing moves under a sheet
+        state.openMenu()
+        XCTAssertFalse(state.moveFocus(1))
+    }
+
+    /// The row is the first N games in the library's order (#937: Recent, Name or arranged); the tile is there whatever N is.
+    @MainActor func testHomeGamesTakeTheFirstGamesAndKeepTheTile() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        XCTAssertEqual(driver.state.homeLimit, 10, "ten by default")
+        XCTAssertEqual(driver.state.homeGames.map(\.id), Array(driver.state.games.prefix(10)).map(\.id), "the library's order")
+        driver.setHomeLimit(.six)
+        XCTAssertEqual(driver.state.homeGames.count, 6)
+        driver.setHomeLimit(.all)
+        XCTAssertEqual(driver.state.homeGames.map(\.id), driver.state.games.map(\.id))
+        // the tile follows the last game for every limit, and for a library smaller than the limit
+        for limit in ConsoleHomeLimit.allCases {
+            driver.setHomeLimit(limit)
+            var state = driver.state
+            state.focus(try XCTUnwrap(state.homeGames.last).id)
+            XCTAssertTrue(state.moveFocus(1)); XCTAssertTrue(state.libraryTileFocused, "\(limit)")
+        }
+        var few = MockConsoleDriver(scenario: .few, animated: false).state
+        XCTAssertEqual(few.homeGames.count, 2)
+        few.focus(few.homeGames[1].id)
+        XCTAssertTrue(few.moveFocus(1)); XCTAssertTrue(few.libraryTileFocused)
+        // a game picked on the library page leads the row, within the limit, until another game starts or RB arranges the row
+        driver.setHomeLimit(.ten)
+        let picked = try XCTUnwrap(driver.state.games.last).id
+        driver.openLibrary(); driver.pickFromLibrary(picked)
+        XCTAssertEqual(driver.state.homeGames.first?.id, picked)
+        XCTAssertEqual(driver.state.homeGames.count, 10)
+        driver.play("demo.1"); driver.returnFromGame()
+        XCTAssertEqual(driver.state.homeGames.map(\.id), Array(driver.state.games.prefix(10)).map(\.id), "playing another game ends it")
+        driver.openLibrary(); driver.pickFromLibrary(picked); driver.toggleArranging()
+        XCTAssertEqual(driver.state.homeGames.first?.id, driver.state.games.first?.id, "arranging shows the library's own order")
+        XCTAssertFalse(driver.state.moveFocus(-1), "and does not go round to the tile")
+        XCTAssertNil(ConsoleHomeLimit(rawValue: "7"))
+        XCTAssertNil(ConsoleHomeLimit.all.count)
+    }
+
+    /// Through the controller: a held left stops on the first game and a new press goes to the tile; down opens the library page; a
+    /// game picked there with A leads the home row, focused, without its last play changing; B from the page comes back to the tile.
+    @MainActor func testControllerDrivesHomeRowAndLibraryPage() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
+        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)); host.layoutSubtreeIfNeeded() }
+        func held(_ action: LauncherGamepad.Action) { gamepad.isRepeating = true; gamepad.perform(action); gamepad.isRepeating = false }
+        settle()
+        let first = try XCTUnwrap(driver.state.homeGames.first).id
+        XCTAssertEqual(driver.state.focusedGameID, first)
+        held(.left); settle()
+        XCTAssertEqual(driver.state.focusedGameID, first, "a held left stops on the first game")
+        XCTAssertFalse(driver.state.libraryTileFocused)
+        gamepad.perform(.left); settle()
+        XCTAssertTrue(driver.state.libraryTileFocused, "a new press goes round to the library tile")
+        gamepad.perform(.right); settle()
+        XCTAssertEqual(driver.state.focusedGameID, first, "right on the tile goes back to the first game")
+        XCTAssertFalse(driver.state.libraryTileFocused)
+        gamepad.perform(.left); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "A on the tile opens the library page")
+        gamepad.perform(.b); settle()
+        XCTAssertNil(driver.state.presentedSheet)
+        XCTAssertTrue(driver.state.libraryTileFocused, "B from the page comes back to the tile")
+        gamepad.perform(.right); settle()
+        gamepad.perform(.down); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "down on the row opens the library page")
+        // ZR to the last game of the grid, ZL to the first and ZR back (L and R do nothing there), then A puts it first on the home row
+        let grid = driver.state.libraryGames.map(\.id)
+        let picked = try XCTUnwrap(grid.last)
+        XCTAssertFalse(driver.state.homeGames.contains { $0.id == picked }, "a game the row does not show")
+        let played = driver.state.games.first { $0.id == picked }?.lastPlayed
+        gamepad.perform(.zr); settle()
+        gamepad.perform(.l); settle()
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(picked), "L does not page")
+        gamepad.perform(.b); settle()
+        gamepad.perform(.zl); settle()
+        gamepad.perform(.zr); settle()
+        gamepad.perform(.r); settle()
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(picked), "Y opens the focused game's options over the page")
+        gamepad.perform(.b); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid)
+        gamepad.perform(.a); settle()
+        XCTAssertNil(driver.state.presentedSheet, "A goes back to the home screen")
+        XCTAssertNil(driver.state.startingGameID, "and does not start the game")
+        XCTAssertEqual(driver.state.homeGames.first?.id, picked, "the game picked leads the row")
+        XCTAssertEqual(driver.state.focusedGameID, picked)
+        XCTAssertEqual(driver.state.games.first { $0.id == picked }?.lastPlayed, played, "its last play is unchanged")
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .explanation(picked), "A on the home row is the game's own A")
+        driver.back(); settle()
+        // ZL and A from the page again: the grid's first game leads the row now
+        gamepad.perform(.down); settle()
+        XCTAssertEqual(driver.state.sheets, [.libraryGrid])
+        gamepad.perform(.zl); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertTrue(driver.state.sheets.isEmpty)
+        XCTAssertEqual(driver.state.homeGames.first?.id, grid.first)
+        // the focus stays in the grid: up on the first row goes nowhere (Y still opens the first game's options)
+        gamepad.perform(.down); settle()
+        gamepad.perform(.zl); settle()
+        gamepad.perform(.right); settle()
+        gamepad.perform(.up); settle()
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(grid[1]), "up on the first row stays there")
+        gamepad.perform(.b); settle()
+        // R3: the chips take the focus; right along them ends on Only built games (no cloud saves chip), A switches it, the grid
+        // takes no direction meanwhile, and B gives the focus back to the game it was on
+        gamepad.perform(.rs); settle()
+        for _ in 0..<5 { gamepad.perform(.right); settle() }
+        gamepad.perform(.down); settle()
+        XCTAssertFalse(driver.state.prefs[.onlyBuilt])
+        gamepad.perform(.a); settle()
+        XCTAssertTrue(driver.state.prefs[.onlyBuilt], "the last chip is Only built games")
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "A on a chip keeps the page")
+        gamepad.perform(.left); settle()
+        gamepad.perform(.left); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.prefs.order, .recent)
+        gamepad.perform(.right); gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.prefs.order, .name, "left and right move between the chips, A picks the library's order")
+        gamepad.perform(.b); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "B leaves the chips, not the page")
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(grid[1]), "the focus is back on the game it was on")
+        gamepad.perform(.b); settle()
+        gamepad.perform(.rs); settle()
+        gamepad.perform(.rs); settle()
+        gamepad.perform(.y); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .options(grid[1]), "R3 again gives it back too")
+    }
+
+    /// The menu is Controllers, General and Exit; General leads to the cloud saves page and to Appearance, which holds the battery
+    /// style and the home row's game count.
+    @MainActor func testMenuHasThreeRowsAndAppearanceHoldsTheHomeCount() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
+        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.15)); host.layoutSubtreeIfNeeded() }
+        settle()
+        gamepad.perform(.plus); settle()
+        gamepad.perform(.down); settle()
+        gamepad.perform(.down); settle()
+        gamepad.perform(.down); settle()   // past the last row: stays on Exit
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .confirmExit, "Controllers, General, Exit: the third row is Exit")
+        gamepad.perform(.b); settle()
+        gamepad.perform(.up); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .settings, "the second row is General")
+        driver.openAppearance(); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .appearance)
+        gamepad.perform(.down); settle()   // from the battery style's first segment to the home count's
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.prefs.homeLimit, .six, "Appearance's second row is the home row's game count")
+        gamepad.perform(.down); settle()
+        gamepad.perform(.a); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .appearance, "nothing under it")
+        XCTAssertEqual(driver.state.prefs.homeLimit, .six)
+    }
+
+    /// A cover's cloud save dot: green in step, yellow a save the cloud does not have yet, grey none found, nothing without a save row.
+    func testSaveDotColours() {
+        let expected: [(ConsoleSaveStatus?, ConsoleSaveDot?)] = [
+            (.synced, .synced), (.pending, .localOnly), (.failed, .localOnly), (.notSynced, .localOnly), (.missingFolder, .localOnly),
+            (.noSave, .noSave), (.notPlayed, .noSave), (.off, nil), (nil, nil)]
+        for (status, dot) in expected { XCTAssertEqual(ConsoleSaveDot(status), dot, "\(String(describing: status))") }
+        XCTAssertEqual(ConsoleSaveDot.synced.color, LauncherPalette.ready)
+        XCTAssertEqual(ConsoleSaveDot.localOnly.color, CloudSavesCard.attention)
+        var game = ConsoleGame(id: "g", title: "Hades", version: "", platforms: [.mac], artwork: nil, status: .ready)
+        XCTAssertEqual(ConsoleSaveDot.accessibilityLabel(game, lang: .en), "Hades, " + L10n.string("console.ready", .en))
+        game.save = ConsoleSaveRow(id: "g", title: "Hades", status: .pending)
+        XCTAssertTrue(ConsoleSaveDot.accessibilityLabel(game, lang: .en).hasSuffix(L10n.string("console.saves.status.pending", .en)))
+    }
+
+    func testTriggersAndKeyboardPagesMapToTheLibraryInputs() {
+        XCTAssertEqual(ConsoleButtons.input(.zl), .first)
+        XCTAssertEqual(ConsoleButtons.input(.zr), .last)
+        XCTAssertEqual(ConsoleButtons.switchName(.zl), "ZL")
+        let pad = LauncherGamepad.states(controller: "c", input: .init(zl: true), splitJoyCon: false)
+        XCTAssertTrue(pad[0].state.contains { $0.0 == "zl" && $0.1 && $0.2 == .zl })
+        XCTAssertEqual(ConsoleGlyphs(family: .nintendo).shoulder("ZR"), .symbol("zr.rectangle.roundedtop"))
+        XCTAssertEqual(ConsoleGlyphs(family: .playStation).shoulder("L"), .symbol("l1.rectangle.roundedbottom"))
+        XCTAssertEqual(ConsoleGlyphs.neutral.shoulder("R"), .letter("R"))
+    }
+
+    /// The right stick moves the focus as the D-pad and the left stick do; the D-pad wins, then the stick pushed further.
+    func testRightStickMovesLikeTheDPad() {
+        func held(_ input: LauncherGamepad.RawPadInput) -> [LauncherGamepad.Action] {
+            LauncherGamepad.states(controller: "c", input: input, splitJoyCon: false)[0].state.filter { $0.1 }.map(\.2)
+        }
+        XCTAssertEqual(held(.init(rightStickY: -0.9)), [.down])
+        XCTAssertEqual(held(.init(rightStickX: 0.9)), [.right])
+        XCTAssertEqual(held(.init(rightStickY: 0.3)), [])   // inside the dead zone
+        XCTAssertEqual(held(.init(leftStickX: -0.6, rightStickX: 0.9)), [.right])
+        XCTAssertEqual(held(.init(dpadY: 1, rightStickY: -0.9)), [.up])
+    }
+
+    /// The library grid scrolls only when the focused card is not all in view, and then just far enough to show it whole.
+    @MainActor func testLibraryGridRevealsACardJustIntoView() {
+        final class Flipped: NSView { override var isFlipped: Bool { true } }
+        let view = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 800))
+        view.documentView = Flipped(frame: NSRect(x: 0, y: 0, width: 400, height: 3000))
+        let scroller = GridScroller(); scroller.scrollView = view
+        func reveal(_ minY: CGFloat, _ height: CGFloat = 300) -> CGFloat? { scroller.reveal(minY: minY, maxY: minY + height, top: 12, bottom: 28, animated: false) }
+        var top: CGFloat { view.contentView.bounds.minY }
+        XCTAssertNil(reveal(100), "in view: no scroll")
+        XCTAssertNil(reveal(800 - 28 - 300), "its bottom on the fade's edge: still in view")
+        XCTAssertEqual(reveal(700), 228, "below: its bottom just clear of the fade")
+        XCTAssertEqual(top, 228)
+        XCTAssertEqual(reveal(-100), -112, "above: its top 12 under the top edge")
+        XCTAssertEqual(top, 116)
+        XCTAssertEqual(reveal(900, 790), 888, "taller than the room: from its top")
+        XCTAssertEqual(top, 1004)
+        XCTAssertEqual(reveal(-5000), -1004, "not above the document's top")
+        XCTAssertEqual(reveal(5000), 3000 - 800, "not past its end")
+    }
+
+    /// In a window: the library grid stays put while the focused card is in view, scrolls just far enough when the focus goes
+    /// below or above it, and the right stick moves the focus as the D-pad does. NX_CONSOLE_SHOTS_DIR keeps a capture of each step.
+    @MainActor func testLibraryGridFollowsTheFocusInAWindow() throws {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        let gamepad = LauncherGamepad()
+        let host = NSHostingView(rootView: ConsoleView(driver: driver, gamepad: gamepad).frame(width: 1280, height: 800))
+        let window = OffscreenWindow(size: NSSize(width: 1280, height: 800), styleMask: [.borderless])
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        let shots = ProcessInfo.processInfo.environment["NX_CONSOLE_SHOTS_DIR"].map { URL(fileURLWithPath: $0) }
+        var step = 0
+        func settle() {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4)); host.layoutSubtreeIfNeeded()
+            guard let shots, let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            step += 1
+            try? rep.representation(using: .png, properties: [:])?.write(to: shots.appendingPathComponent(String(format: "grid-follow-%02d.png", step)))
+        }
+        func press(_ raw: LauncherGamepad.RawPadInput) {   // through the controller's own mapping, as a press and a release
+            for state in [raw, LauncherGamepad.RawPadInput()] {
+                for action in LauncherGamepad.states(controller: "c", input: state, splitJoyCon: false)[0].state where action.1 { gamepad.perform(action.2) }
+            }
+        }
+        func allViews(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(allViews) }
+        func gridOffset() -> CGFloat? {   // the tallest vertical scroll view is the grid's
+            allViews(host).compactMap { $0 as? NSScrollView }.filter { ($0.documentView?.frame.height ?? 0) > $0.contentSize.height + 1 }
+                .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }?.documentVisibleRect.minY
+        }
+        if let shots { try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true) }
+        settle()
+        driver.openLibrary(); settle()
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid)
+        let columns = ConsoleLibraryGrid<MockConsoleDriver>.columns(width: 1280, compact: false)
+        XCTAssertGreaterThan(driver.state.libraryGames.count, columns * 3, "more rows than the page shows")
+        let top = try XCTUnwrap(gridOffset())
+        press(.init(rightStickX: 1)); settle()
+        XCTAssertEqual(try XCTUnwrap(gridOffset()), top, accuracy: 0.5, "a card in view: the grid stays put")
+        var offsets = [top]
+        for _ in 0..<3 {
+            press(.init(rightStickY: -1)); settle()   // down with the right stick
+            offsets.append(try XCTUnwrap(gridOffset()))
+        }
+        XCTAssertGreaterThan(offsets.last!, top, "the focus went below the view: the grid followed it")
+        XCTAssertEqual(offsets, offsets.sorted(), "down only scrolls down")
+        let low = offsets.last!
+        press(.init(dpadY: 1)); settle()   // up one row: that card is in view already
+        let afterUp = try XCTUnwrap(gridOffset())
+        XCTAssertLessThanOrEqual(afterUp, low)
+        for _ in 0..<3 { press(.init(dpadY: 1)); settle() }
+        XCTAssertEqual(try XCTUnwrap(gridOffset()), top, accuracy: 0.5, "back on the first row, the grid is back at its top")
     }
 
     /// A game being built neither starts nor explains on A: its app is still being written (the tile shakes, ConsoleGameRow).

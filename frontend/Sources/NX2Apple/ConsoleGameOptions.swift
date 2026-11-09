@@ -56,6 +56,11 @@ struct ConsoleMenuRow: View {
                              preview: AnyView(ConsoleBatteryPreview(style: prefs.batteryStyle, lang: lang, compact: compact))) { raw in
                 if let style = ConsoleBatteryStyle(rawValue: raw) { driver.setBatteryStyle(style) }
             }
+            ConsoleChoiceRow(id: "console.appearance.homeLimit", scope: scope, title: t("console.pref.homeLimit"), note: t("console.pref.homeLimitNote"),
+                             choices: ConsoleHomeLimit.allCases.map { ($0.rawValue, $0.count.map(String.init) ?? t("console.pref.homeLimit.all")) },
+                             chosen: prefs.homeLimit.rawValue, compact: compact) { raw in
+                if let limit = ConsoleHomeLimit(rawValue: raw) { driver.setHomeLimit(limit) }
+            }
         }
     }
 }
@@ -306,33 +311,6 @@ struct ConsoleSwitchRow: View {
     }
 }
 
-/// The Library page: the order of the games (Recent, Name, or arranged with RB), the library's switch (only built games), and the
-/// way to the cloud saves page.
-@MainActor struct ConsoleLibraryList<Driver: ConsoleDriver>: View {
-    @ObservedObject var driver: Driver
-    let lang: Lang
-    let compact: Bool
-    static var scope: String { "console.library" }
-    private var scope: String { Self.scope }
-    private func t(_ key: String) -> String { L10n.string(key, lang) }
-    private var prefs: ConsolePrefs { driver.state.prefs }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Recent and Name, as the desktop offers them; Custom while an order arranged with RB is in use, which either choice ends
-            ConsoleMenuRow(id: "console.library.order", scope: scope, symbol: "arrow.up.arrow.down", title: t("console.order.title"),
-                           note: t(prefs.order == .custom ? "console.order.noteCustom" : "console.order.note"), value: t(prefs.order.labelKey),
-                           compact: compact) { driver.setLibraryOrder(prefs.order == .recent ? .name : .recent) }
-            ForEach(ConsolePref.onLibrary, id: \.self) { pref in
-                ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
-                                 isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
-            }
-            ConsoleMenuRow(id: "console.library.saves", scope: scope, symbol: "icloud", title: t(ConsoleCloudSaves.menuKey),
-                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
-        }
-    }
-}
-
 /// The Settings page: the display language (a page of its own), the app's update, and the launcher's switch for after a game quits.
 @MainActor struct ConsoleSettingsList<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver
@@ -354,6 +332,8 @@ struct ConsoleSwitchRow: View {
                 ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
                                  isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
             }
+            ConsoleMenuRow(id: "console.settings.saves", scope: scope, symbol: "externaldrive.badge.icloud", title: t(ConsoleCloudSaves.menuKey),
+                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
             ConsoleMenuRow(id: "console.settings.appearance", scope: scope, symbol: "paintpalette", title: t("console.settings.appearance"),
                            note: t("console.settings.appearanceNote"), compact: compact) { driver.openAppearance() }
         }

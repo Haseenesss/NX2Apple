@@ -58,6 +58,8 @@ struct ConsoleGame: Identifiable {
     var cheats: ConsoleCheats?
     var canReset = false
     var save: ConsoleSaveRow?
+    /// When it was last played from the launcher (LibraryGame.lastPlayed, which the Recent order goes by); nil for never.
+    var lastPlayed: Date?
 
     /// The console's order: the games this Mac can play first, then the rest, each group in the order it came in.
     static func readyFirst(_ games: [ConsoleGame]) -> [ConsoleGame] {
@@ -131,13 +133,14 @@ enum ConsoleSheet: Equatable {
     /// menu: the console's own menu (Library, Controllers, Settings, leaving console mode), on the Select-type button.
     /// mapping: what each controller button sends in games, for all games (the Controls page's controller layout).
     /// gamePad: a game's controller settings (its Controls rows: rumble, and its own button mapping), opened from its options.
-    /// library: the menu's Library page (the library's switch, the way to the cloud saves). settings: its Settings page (the display
+    /// libraryGrid: the library page over the whole screen, every game in a grid under its sort, its filter and the way to the cloud
+    /// saves (the home row's last tile, down on the row, and the menu's Library). settings: the menu's Settings page (the display
     /// language, the app's update, the launcher after a game), language: the display language list.
     /// cloudSaves: each game's cloud save state and time, as a page of its own over the whole screen.
     /// confirmExit: "Leave console mode?", over what is open (the menu's Exit, or B on the home screen).
     /// confirmMapping: "Save changes?", leaving the button mapping after something on it changed.
     /// advanced: a game's advanced options. confirmReset: "Reset this game's options?". confirmUpdate: install the app's update, or restart into it.
-    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), library, settings, appearance, language, cloudSaves, confirmExit, confirmMapping
+    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), libraryGrid, settings, appearance, language, cloudSaves, confirmExit, confirmMapping
     case advanced(String), confirmReset(String), confirmUpdate
     /// The questions drawn in the middle of the screen, over what they were asked from.
     var isQuestion: Bool {
@@ -146,10 +149,10 @@ enum ConsoleSheet: Equatable {
         default: return false
         }
     }
-    /// Pages over the whole screen rather than a panel at the side: the cloud saves, a game's controller settings, the button mapping.
+    /// Pages over the whole screen rather than a panel at the side: the library, the cloud saves, a game's controller settings, the button mapping.
     var isFullScreen: Bool {
         switch self {
-        case .cloudSaves, .gamePad, .mapping: return true
+        case .libraryGrid, .cloudSaves, .gamePad, .mapping: return true
         default: return false
         }
     }
@@ -163,7 +166,7 @@ enum ConsoleSheet: Equatable {
         case .confirmReset: return "console.confirmReset"
         case .confirmUpdate: return "console.confirmUpdate"
         case .cloudSaves: return "console.saves"   // ConsoleCloudSavesPage.scope
-        case .library: return "console.library"
+        case .libraryGrid: return "console.grid"   // ConsoleLibraryGrid.scope
         case .settings: return "console.settings"
         case .options: return "console.options"
         case .gamePad: return "console.gamePad"
@@ -213,8 +216,18 @@ struct ConsolePadLayout: Equatable {
 }
 
 struct ConsoleState {
+    /// Every game the library shows (its filter applied): the library page's grid. The home row is `homeGames`.
     var games: [ConsoleGame] = []
     var focusedGameID: String?
+    /// The home row's last tile, the way to the library page, has the focus: the title and the backdrop show the library.
+    var libraryTileFocused = false
+    /// The game picked on the library page: it leads the home row until another game is played (its lastPlayed is not changed).
+    var frontGameID: String?
+    /// The library page's grid: the games in the library's order (Recent, Name, or arranged with RB: `prefs.order`), which the
+    /// driver gives them in; by name again for a driver that leaves them as they came.
+    var libraryGames: [ConsoleGame] {
+        prefs.order == .name ? games.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending } : games
+    }
     /// A stack allows an explanation or Controllers to return to the options underneath it.
     var sheets: [ConsoleSheet] = []
     var controllers: [ConsoleController] = []
@@ -264,19 +277,61 @@ struct ConsoleState {
     var focusedGame: ConsoleGame? { games.first { $0.id == focusedGameID } ?? games.first }
     var startingGame: ConsoleGame? { games.first { $0.id == startingGameID } }
 
+    /// How many games the home row shows (Settings → Appearance), nil for all.
+    var homeLimit: Int? { prefs.homeLimit.count }
+    /// The home row: the game picked on the library page, then the library's order (#937: Recent, Name, or arranged with RB), the
+    /// first `homeLimit` of them. The library tile follows them whatever their number.
+    var homeGames: [ConsoleGame] {
+        var ordered = games
+        if let front = frontGameID, let i = ordered.firstIndex(where: { $0.id == front }) { ordered.insert(ordered.remove(at: i), at: 0) }
+        return homeLimit.map { Array(ordered.prefix($0)) } ?? ordered
+    }
+    /// The game the home screen shows focused: the focused game when the row has it, else the row's first; nil on the library tile.
+    var homeFocusedGame: ConsoleGame? {
+        guard !libraryTileFocused else { return nil }
+        let row = homeGames
+        return row.first { $0.id == focusedGameID } ?? row.first
+    }
+    /// The games built for this Mac or an iPhone (LibraryFilter.built), for the library tile's count.
+    var builtCount: Int { games.filter { $0.status == .ready || $0.status == .iphoneOnly }.count }
+
     mutating func focus(_ id: String) {
         guard startingGameID == nil, sheets.isEmpty, !exited, games.contains(where: { $0.id == id }) else { return }
         focusedGameID = id
+        libraryTileFocused = false
     }
-    mutating func moveFocus(_ step: Int) {
-        guard !games.isEmpty else { return }
-        let index = games.firstIndex { $0.id == focusedGame?.id } ?? 0
-        focus(games[min(max(index + step, 0), games.count - 1)].id)
+    /// The home row's library tile takes the focus (the game focused before is kept for when the focus comes back).
+    mutating func focusLibraryTile() {
+        guard startingGameID == nil, sheets.isEmpty, !exited else { return }
+        libraryTileFocused = true
+    }
+    /// Left and right along the home row, the library tile last. Inside the row the focus moves one place. At either end a held
+    /// direction (`isRepeat`) stops there, and returns false so the view can show the edge; a new press goes round: left on the
+    /// first game to the library tile, right on the tile to the first game.
+    @discardableResult mutating func moveFocus(_ step: Int, repeat isRepeat: Bool = false) -> Bool {
+        guard startingGameID == nil, sheets.isEmpty, !exited else { return false }
+        let row = homeGames
+        let count = row.count + (arranging ? 0 : 1)   // the games, then the tile (hidden while arranging)
+        let index = libraryTileFocused ? row.count : (row.firstIndex { $0.id == focusedGameID } ?? 0)
+        var target = index + step
+        if target < 0 || target >= count {
+            guard !isRepeat, !arranging, count > 1 else { return false }   // arranging does not go round
+            target = (target % count + count) % count
+        }
+        if target == row.count { focusLibraryTile() } else { focus(row[target].id) }
+        return true
+    }
+    /// A game started: it is the most recent now, so the library page's pick no longer leads the row.
+    mutating func recordPlayed(_ id: String, at date: Date = Date()) {
+        guard let i = games.firstIndex(where: { $0.id == id }) else { return }
+        games[i].lastPlayed = date
+        if frontGameID != nil { frontGameID = nil }
     }
     mutating func toggleArranging() {
         guard arranging || (!games.isEmpty && presentedSheet == nil && startingGameID == nil && !exited) else { return }
         arranging.toggle()
         heldGameID = nil
+        if arranging { frontGameID = nil; libraryTileFocused = false }   // the row shows the library's own order to arrange
     }
     mutating func toggleHold() {
         guard arranging, let id = focusedGame?.id else { return }
@@ -321,7 +376,7 @@ struct ConsoleState {
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
         if game.building { return }   // its app is being written: the tile shakes instead (ConsoleGameRow)
-        if game.status == .ready { startingGameID = id; starting = .preparing; sheets = [] }
+        if game.status == .ready { startingGameID = id; starting = .preparing; sheets = []; libraryTileFocused = false }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }
     mutating func openOptions(_ id: String) {
@@ -338,8 +393,17 @@ struct ConsoleState {
         sheets.append(.cloudSaves)
     }
     mutating func openLibrary() {
-        guard !exited, startingGameID == nil, presentedSheet != .library else { return }
-        sheets.append(.library)
+        guard !exited, startingGameID == nil, presentedSheet != .libraryGrid else { return }
+        sheets.append(.libraryGrid)
+    }
+    /// A on a game in the library page: back to the home screen with that game first in the row and focused. Starting it is the
+    /// home screen's A, so the grid never starts a game by accident.
+    mutating func pickFromLibrary(_ id: String) {
+        guard !exited, startingGameID == nil, presentedSheet == .libraryGrid, games.contains(where: { $0.id == id }) else { return }
+        frontGameID = id
+        focusedGameID = id
+        libraryTileFocused = false
+        sheets = []
     }
     mutating func openSettings() {
         guard !exited, startingGameID == nil, presentedSheet != .settings else { return }
@@ -410,6 +474,7 @@ struct ConsoleState {
         if presentedSheet == .mapping, mappingRow != nil { mappingRow = nil; return }   // B in a button's choices goes back to the list
         if presentedSheet == .mapping, mappingChanged { sheets.append(.confirmMapping); return }   // asks before leaving changes
         if presentedSheet == .mapping { mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
+        if presentedSheet == .libraryGrid, sheets.count == 1 { libraryTileFocused = true }   // back on the home row at the tile it opens from
         if !sheets.isEmpty {
             if presentedSheet == .mapping { mappingGameID = nil }
             sheets.removeLast(); assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil
@@ -446,8 +511,12 @@ struct ConsoleState {
     func openControllers()
     /// The console's menu (the Select-type button, or the menu button in the top bar).
     func openMenu()
-    /// The menu's Library and Settings pages, and the cloud saves page (from Library).
+    /// The library page (ConsoleLibraryGrid), the menu's Settings page, and the cloud saves page (from the library page).
     func openLibrary()
+    /// The library page's A on a game, and its order.
+    func pickFromLibrary(_ gameID: String)
+    /// Each built game's cloud save (ConsoleGame.save), for the covers' dots: read when the library page opens and when the library changes.
+    func loadSaveStates()
     func openSettings()
     func openCloudSaves()
     /// The Settings page's display language list.
@@ -469,6 +538,10 @@ struct ConsoleState {
     /// A launcher switch (on the Library, Controllers or Settings page), and the app's update (checked, or asked about and then installed or restarted into).
     func setPref(_ pref: ConsolePref, on: Bool)
     func setBatteryStyle(_ style: ConsoleBatteryStyle)
+    /// Settings → Appearance: how many games the home row shows.
+    func setHomeLimit(_ limit: ConsoleHomeLimit)
+    /// The home row's library tile took the focus (the pad focus moved there).
+    func focusLibraryTile()
     func appUpdateAction()
     func confirmAppUpdate()
     /// The system's Home button setting (macOS 27), from the Controllers page.
@@ -522,6 +595,8 @@ extension ConsoleDriver {
     func finishMapping(save: Bool) {}
     func openGameMapping(_ gameID: String) {}
     func openLibrary() {}
+    func pickFromLibrary(_ gameID: String) {}
+    func loadSaveStates() {}
     func openSettings() {}
     func openCloudSaves() {}
     func openLanguage() {}
@@ -537,6 +612,8 @@ extension ConsoleDriver {
     func openOnDesktop(_ gameID: String) { exitToDesktop() }
     func setPref(_ pref: ConsolePref, on: Bool) {}
     func setBatteryStyle(_ style: ConsoleBatteryStyle) {}
+    func setHomeLimit(_ limit: ConsoleHomeLimit) {}
+    func focusLibraryTile() {}
     func appUpdateAction() {}
     func confirmAppUpdate() {}
     func openSystemHomeSettings() {}

@@ -12,6 +12,9 @@ import NXLauncher
     let size: CGSize
     let compact: Bool
     let inset: CGFloat
+    /// The focused tile's lean at an end of the row a held direction stopped at (ConsoleView.nudgeAtEdge).
+    var edgeNudge: CGFloat = 0
+    static var libraryTileID: String { "console.library.tile" }
     @StateObject private var drag = RowDrag()
     @State private var tileFrames: [String: CGRect] = [:]
     @State private var rowOriginX: CGFloat = 0
@@ -31,6 +34,12 @@ import NXLauncher
     private var state: ConsoleState { driver.state }
     private func t(_ key: String) -> String { L10n.string(key, lang) }
     static func cell(_ id: String) -> String { "console.row." + id }
+    /// The home row's focused place, by its tile frame key: a game's id, or the library tile's.
+    private var homeFocusID: String? { state.libraryTileFocused ? Self.libraryTileID : state.homeFocusedGame?.id }
+    /// The first games of the library's order (Settings → Appearance says how many), then the library tile; the same tiles while
+    /// arranging, so RB changes nothing in the row.
+    private var shownGames: [ConsoleGame] { state.homeGames }
+    private var libraryCount: String { String(format: t("console.library.count"), state.games.count, state.builtCount) }
 
     var body: some View {
         let width: CGFloat = compact ? size.width - inset * 2 - 16 : Self.tileWidth(rowWidth: size.width - inset * 2)
@@ -47,10 +56,10 @@ import NXLauncher
         // a tile closer than this to the scroll area's edge is brought in: past the margin and the fade, so the game in focus is
         // never faded
         let safe = 8 + margin + (state.arranging ? 0 : fade)
-        let order = state.games.map(\.id)
+        let order = shownGames.map(\.id)   // the tiles in the row, for the mouse's drag
         return ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: spacing) {
-                    ForEach(state.games) { game in
+                    ForEach(shownGames) { game in
                         tile(game, width: width, scale: heldScale)
                             // the line between the games ready on this Mac and the others, which a game picked up does not cross
                             .overlay(alignment: .leading) {
@@ -64,6 +73,7 @@ import NXLauncher
                             .padding(.horizontal, 8)
                             .id(Self.cell(game.id))
                     }
+                    if !state.arranging { libraryTile(width: width) }
                 }
                 .padding(.top, compact ? 52 : 72).padding(.bottom, 12)   // the room for the game picked up, there whether arranging or not: making it on RB moved every card
                 .padding(.horizontal, margin)
@@ -88,10 +98,10 @@ import NXLauncher
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { moreBefore = more.0; moreAfter = more.1 }
             }
             .onAppear {
-                DispatchQueue.main.async { reveal(state.focusedGame?.id, margin: safe, center: true, animated: false) }
+                DispatchQueue.main.async { reveal(homeFocusID, margin: safe, center: true, animated: false) }
                 drag.onEdge = { way in scroller.scroll(by: CGFloat(way) * (width + spacing + 16)) }   // near an end while dragging: one game that way
             }
-            .onChange(of: state.focusedGame?.id) { id in
+            .onChange(of: homeFocusID) { id in
                 // The ring moves across the visible tiles. The row scrolls only when the focused tile would leave the visible area, by
                 // the least that brings it inside; while arranging it is brought to the middle, where a game picked up has room
                 guard !drag.active else { return }
@@ -127,7 +137,7 @@ import NXLauncher
     }
 
     private func tile(_ game: ConsoleGame, width: CGFloat, scale: CGFloat) -> some View {
-        let selected = state.focusedGame?.id == game.id
+        let selected = !state.libraryTileFocused && state.focusedGame?.id == game.id
         let held = state.heldGameID == game.id
         let dragged = drag.id == game.id
         let rowWidth = size.width
@@ -146,13 +156,13 @@ import NXLauncher
                 driver.pickUp(game.id)
                 guard driver.state.heldGameID == game.id else { return }
                 drag.begin(game.id, frame: tileFrames[game.id], rowOriginX: rowOriginX, rowWidth: rowWidth,
-                           onMove: { follow(order: driver.state.games.map(\.id), frames: tileFrames) },
+                           onMove: { follow(order: driver.state.homeGames.map(\.id), frames: tileFrames) },
                            onRelease: { driver.putDown() })
             })
             .scaleEffect(drag.pressing == game.id && !held ? 1.03 : 1)   // pressed: it starts to lift before it is picked up
             .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: drag.pressing)
             .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { if game.building { shake(game.id) } else { driver.play(game.id) } })
-            .offset(x: shakingID == game.id ? shakeOffset : 0)
+            .offset(x: (selected ? edgeNudge : 0) + (shakingID == game.id ? shakeOffset : 0))
             .arrangeLook(arranging: state.arranging, focused: selected, held: held, anyHeld: state.heldGameID != nil,
                          canLeft: held && state.canMoveHeld(-1), canRight: held && state.canMoveHeld(1), scale: scale,
                          dragX: dragged ? drag.offset(for: game.id) : 0)
@@ -171,6 +181,25 @@ import NXLauncher
             // VoiceOver moves a game one place from the actions menu, picked up and put down at once
             .accessibilityAction(named: t("console.arrange.moveLeft")) { moveByOne(game.id, -1) }
             .accessibilityAction(named: t("console.arrange.moveRight")) { moveByOne(game.id, 1) }
+    }
+
+    /// The row's last tile: the library, how many games it has and how many are built. A (or down anywhere on the row) opens it.
+    private func libraryTile(width: CGFloat) -> some View {
+        let selected = state.libraryTileFocused
+        return Button { driver.openLibrary() } label: {
+            ConsoleLibraryTile(title: t("console.menu.library"), count: libraryCount, compact: compact)
+                .frame(width: width)
+                .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .padTarget(Self.libraryTileID, scope: "console", radius: 16, activate: { driver.openLibrary() })
+        .offset(x: selected ? edgeNudge : 0)
+        .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [Self.libraryTileID: g.frame(in: .named("console.row"))]) })
+        .accessibilityLabel(t("console.menu.library") + ", " + libraryCount)
+        .accessibilityHint(t("console.library.open"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .padding(.horizontal, 8)
+        .id(Self.cell(Self.libraryTileID))
     }
 
     /// The dragged game takes one step toward the pointer when it has passed the next game, within its group (the state refuses to
@@ -228,7 +257,4 @@ import NXLauncher
     }
 }
 
-struct ConsoleTileFramesKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
-}
+

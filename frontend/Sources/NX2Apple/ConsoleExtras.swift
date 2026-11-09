@@ -44,7 +44,6 @@ enum ConsolePref: String, CaseIterable {
     var titleKey: String { "console.pref." + rawValue }
     var noteKey: String { "console.pref." + rawValue + "Note" }
     /// The switches of each page, in their order.
-    static let onLibrary: [ConsolePref] = [.onlyBuilt]
     static let onControllers: [ConsolePref] = [.startInConsole, .promptOnController]
     static let onSettings: [ConsolePref] = [.returnAfterPlay]
 }
@@ -78,9 +77,20 @@ enum ConsoleBatteryStyle: String, CaseIterable {
     var showsPercent: Bool { self == .both || self == .percent }
 }
 
+/// How many games the home screen's row shows, the most recently played first (ConsoleState.homeGames): 6, 8, 10 or all of them.
+/// The library tile after them is always there. Settings → Appearance; kept in the defaults like the battery style.
+enum ConsoleHomeLimit: String, CaseIterable {
+    case six = "6", eight = "8", ten = "10", all
+    static let defaultsKey = "consoleHomeLimit"
+    static var saved: ConsoleHomeLimit { UserDefaults.standard.string(forKey: defaultsKey).flatMap(ConsoleHomeLimit.init(rawValue:)) ?? .ten }
+    /// The number of games, nil for all.
+    var count: Int? { Int(rawValue) }
+}
+
 struct ConsolePrefs: Equatable {
     var values: [ConsolePref: Bool] = [:]
     var batteryStyle: ConsoleBatteryStyle = .both
+    var homeLimit: ConsoleHomeLimit = .ten
     var appVersion = ""
     var update: ConsoleAppUpdate = .upToDate
     /// What the update store says now (downloading, ready, why an install failed), shown under the version.

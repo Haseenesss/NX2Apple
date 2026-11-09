@@ -7,16 +7,21 @@ import os
 /// back, X opens the selected game's launch options and Y opens the Manage menu. On an Xbox or PlayStation controller A is the
 /// bottom button (the cross), on a Nintendo-layout controller it is the one on the right, as its player expects. This is the
 /// menus only: what a game receives is the Controls page's layout (By label or By position, #70), which this does not change.
-/// The D-pad or left stick moves (held, it repeats), L and R switch the pages. Input counts only while the launcher is the active app: a game it
+/// The D-pad or either stick moves (held, it repeats), L and R switch the pages. Input counts only while the launcher is the active app: a game it
 /// started is in front then, and GameController gives a controller's input to the app in front, so the launcher never
 /// acts behind a running game.
 final class LauncherGamepad: ObservableObject {
-    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, plus, select }
+    /// zl and zr: the triggers (ZL / ZR, LT / RT, L2 / R2), read as buttons. Console mode's library page goes to its first or last game with them.
+    /// rs: the right stick pressed (R3). Console mode's library page shows its display chips with it.
+    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, zl, zr, rs, plus, select }
 
     @Published private(set) var connected = false
     /// `select` is the Select-type button (DualShock Share, DualSense Create, Xbox View, Nintendo Minus): GameController's
     /// `buttonOptions`. The system does not claim it, so it always reaches the app. The desktop launcher opens console mode with it.
     var perform: (Action) -> Void = { _ in }
+    /// True while `perform` runs for a held direction's repeat rather than for a new press: console mode's home row stops at its
+    /// ends on a repeat and goes round on a new press. Tests set it around a `perform` to act as a held button.
+    var isRepeating = false
     /// Sees every press with the controller it came from before it navigates. Returning true consumes it (the Controllers sheet uses
     /// this to give the next press to the player being assigned).
     var capture: ((String, Action) -> Bool)?
@@ -29,6 +34,7 @@ final class LauncherGamepad: ObservableObject {
         var rightStickX: Float = 0, rightStickY: Float = 0
         var a = false, b = false, x = false, y = false
         var l = false, r = false, plus = false, select = false
+        var zl = false, zr = false, rs = false
     }
 
     static func isJoyCon(category: String?, vendorName: String? = nil) -> Bool {
@@ -40,13 +46,14 @@ final class LauncherGamepad: ObservableObject {
     /// counter-clockwise and Right Joy-Con (`.R`) is rotated 90° clockwise so launcher and console mode match sideways play (#740).
     static func states(controller: String, input: RawPadInput, splitJoyCon: Bool) -> [(controller: String, state: [(String, Bool, Action)])] {
         guard splitJoyCon else {
-            let x = input.dpadX != 0 ? input.dpadX : input.leftStickX
-            let y = input.dpadY != 0 ? input.dpadY : input.leftStickY
+            // the D-pad first, then whichever stick is pushed further: the right stick moves the focus as the left one does
+            let x = input.dpadX != 0 ? input.dpadX : Self.further(input.leftStickX, input.rightStickX)
+            let y = input.dpadY != 0 ? input.dpadY : Self.further(input.leftStickY, input.rightStickY)
             return [(controller, [
                 ("left", x < -0.5, .left), ("right", x > 0.5, .right), ("up", y > 0.5, .up), ("down", y < -0.5, .down),
                 ("a", input.a, .a), ("b", input.b, .b),   // by label, see `face`
                 ("x", input.x, .x), ("y", input.y, .y),
-                ("l", input.l, .l), ("r", input.r, .r),
+                ("l", input.l, .l), ("r", input.r, .r), ("zl", input.zl, .zl), ("zr", input.zr, .zr), ("rs", input.rs, .rs),
                 ("plus", input.plus, .plus), ("select", input.select, .select),
             ])]
         }
@@ -68,6 +75,7 @@ final class LauncherGamepad: ObservableObject {
         ]
         return [(controller + ".L", leftState), (controller + ".R", rightState)]
     }
+    private static func further(_ a: Float, _ b: Float) -> Float { abs(b) > abs(a) ? b : a }
     /// The GameController button an action reads, in one place (the glyphs of the console mode follow it). GameController names
     /// the face buttons by label: buttonA is the bottom of Apple's diamond (GCExtendedGamepad.h), which is A on an Xbox
     /// controller and the cross on a DualSense, and a Nintendo-layout controller reports the button printed A (on the right) as
@@ -160,7 +168,8 @@ final class LauncherGamepad: ObservableObject {
             a: button(GCInputButtonA), b: button(GCInputButtonB),
             x: button(GCInputButtonX), y: button(GCInputButtonY),
             l: button(GCInputLeftShoulder), r: button(GCInputRightShoulder),
-            plus: button(GCInputButtonMenu), select: button(GCInputButtonOptions)
+            plus: button(GCInputButtonMenu), select: button(GCInputButtonOptions),
+            zl: button(GCInputLeftTrigger), zr: button(GCInputRightTrigger), rs: button(GCInputRightThumbstickButton)
         )
         let split = isJoyCon && joyconSplit()
         let groups = Self.states(controller: controller, input: raw, splitJoyCon: split)
@@ -190,7 +199,12 @@ final class LauncherGamepad: ObservableObject {
         repeating = action
         repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self, self.repeating == action else { return }
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.fire(action) }
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.isRepeating = true
+                self.fire(action)
+                self.isRepeating = false
+            }
         }
     }
 
