@@ -320,6 +320,7 @@ struct ConsoleState {
     }
     mutating func play(_ id: String) {
         guard !exited, startingGameID == nil, let game = games.first(where: { $0.id == id }) else { return }
+        if game.building { return }   // its app is being written: the tile shakes instead (ConsoleGameRow)
         if game.status == .ready { startingGameID = id; starting = .preparing; sheets = [] }
         else if presentedSheet != .explanation(id) { sheets.append(.explanation(id)) }
     }

@@ -684,4 +684,19 @@ import NXModel
         }
     }
 
+    /// A game being built neither starts nor explains on A: its app is still being written (the tile shakes, ConsoleGameRow).
+    @MainActor func testABuildingGameNeitherStartsNorExplains() {
+        let driver = MockConsoleDriver(scenario: .full, animated: false)
+        for (id, status) in [("demo.0", ConsoleGame.Status.ready), ("demo.3", .building)] {   // a rebuild of a ready game, and a first build
+            let i = driver.state.games.firstIndex { $0.id == id }!
+            driver.state.games[i].building = true
+            driver.state.games[i].status = status
+            driver.play(id)
+            XCTAssertNil(driver.state.startingGameID, id)
+            XCTAssertNil(driver.state.presentedSheet, id)
+            driver.state.games[i].building = false
+        }
+        driver.play("demo.0")
+        XCTAssertEqual(driver.state.startingGameID, "demo.0", "once built it starts")
+    }
 }
