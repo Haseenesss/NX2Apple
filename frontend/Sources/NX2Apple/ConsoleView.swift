@@ -3,34 +3,6 @@ import Combine
 import NXCore
 import NXLauncher
 
-/// Semantic inputs from a future controller adapter; the view does not discover hardware.
-enum ConsoleInput {
-    case left, right, up, down, activate, back, options, menu
-    /// The library page's: a screen back or on (L, R), its first or last game (ZL, ZR). Nothing elsewhere.
-    case pageBack, pageForward, first, last
-
-    /// The launcher's controller path (Gamepad.swift) in console terms: the D-pad and left stick move, A activates, B backs out,
-    /// Y opens the focused game's options, the menu button (+, Menu, Options) and the Select-type button (−, View, Share,
-    /// Create) the console's menu. The same button again closes what it opened. L, R, ZL and ZR page the library. X is not used.
-    init?(_ action: LauncherGamepad.Action) {
-        switch action {
-        case .left: self = .left
-        case .right: self = .right
-        case .up: self = .up
-        case .down: self = .down
-        case .a: self = .activate
-        case .b: self = .back
-        case .y: self = .options
-        case .plus, .select: self = .menu
-        case .l: self = .pageBack
-        case .r: self = .pageForward
-        case .zl: self = .first
-        case .zr: self = .last
-        case .x: return nil
-        }
-    }
-}
-
 @MainActor struct ConsoleView<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver
     var lang: Lang = .initial()
@@ -55,6 +27,12 @@ enum ConsoleInput {
     @State private var edgeNudge: CGFloat = 0
     /// The console's size, for how far L and R move in the library page's grid.
     @State private var screenSize: CGSize = .zero
+    /// The library page: its chips have the focus (R3), the game the focus was on before, the last game focused in the grid, and
+    /// the height of its scroll area (how many rows L and R move).
+    @State private var displayMode = false
+    @State private var gridFocusBeforeDisplay: String?
+    @State private var lastGridFocus: String?
+    @State private var gridViewport: CGFloat = 0
     /// The home row's last tile, the way to the library page.
     static var libraryTileID: String { "console.library.tile" }
 
@@ -155,8 +133,14 @@ enum ConsoleInput {
             gamepad.perform = { [self] action in
                 if let input = ConsoleButtons.input(action, swapAB: driver.state.menuSwapAB) { glyphs = .current(); handle(input, isRepeat: gamepad.isRepeating) } }
             resetFocus() }
-        .onDisappear { gamepad.perform = { _ in }; gamepad.capture = nil }
+        .onDisappear { gamepad.perform = { _ in }; gamepad.capture = nil; gamepad.repeats = [.left, .right, .up, .down] }
+        .onChange(of: state.presentedSheet) { sheet in
+            // held L and R keep paging on the library page; its chips give the focus back when anything else opens
+            gamepad.repeats = sheet == .libraryGrid ? [.left, .right, .up, .down, .l, .r] : [.left, .right, .up, .down]
+            if sheet != .libraryGrid { displayMode = false; gridFocusBeforeDisplay = nil }
+        }
         .onChange(of: pad.focused) { id in
+            if ConsoleLibraryGrid<Driver>.gameID(of: id) != nil { lastGridFocus = id }
             if let id, id.hasPrefix("console.game.") { driver.focus(String(id.dropFirst("console.game.".count))) }
             else if id == Self.libraryTileID, !state.libraryTileFocused { driver.focusLibraryTile() }
             if editingOption != id { editingOption = nil }
@@ -251,13 +235,13 @@ enum ConsoleInput {
                 HStack(alignment: .top, spacing: (compact ? 22 : 28) - 16) {
                     ForEach(state.homeGames) { game in
                         let selected = state.homeFocusedGame?.id == game.id
-                        Button { driver.focus(game.id); driver.play(game.id) } label: {
+                        Button { driver.focus(game.id); play(game) } label: {
                             ConsoleGameTile(game: game, compact: compact, lang: lang)
                                 .frame(width: width)
                                 .contentShape(RoundedRectangle(cornerRadius: 16))
                         }
                         .buttonStyle(.plain)
-                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { driver.play(game.id) })
+                        .padTarget("console.game." + game.id, scope: "console", radius: 16, activate: { play(game) })
                         .offset(x: selected ? edgeNudge : 0)
                         .background(GeometryReader { g in Color.clear.preference(key: ConsoleTileFramesKey.self, value: [game.id: g.frame(in: .named("console.row"))]) })
                         .accessibilityLabel(ConsoleSaveDot.accessibilityLabel(game, lang: lang))
@@ -308,6 +292,15 @@ enum ConsoleInput {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .padding(.horizontal, 8)
         .id(Self.rowCell(Self.libraryTileID))
+    }
+
+    /// A on a home tile: the game starts, or a placeholder card (`-consoleDemoGames`) shakes, as it has nothing to start.
+    private func play(_ game: ConsoleGame) {
+        guard game.isPlaceholder else { driver.play(game.id); return }
+        guard !reduceMotion else { return }
+        for (i, x) in [CGFloat(7), -7, 5, -3, 0].enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(i)) { withAnimation(.easeInOut(duration: 0.05)) { edgeNudge = x } }
+        }
     }
 
     /// A held direction stopped at an end of the home row: the focused tile leans 6 pt that way and back (0.12 s). Not with Reduce Motion.
@@ -463,7 +456,7 @@ enum ConsoleInput {
     @ViewBuilder private func fullPage(_ sheet: ConsoleSheet, compact: Bool) -> some View {
         switch sheet {
         case .libraryGrid:
-            ConsoleLibraryGrid(driver: driver, lang: lang, compact: compact, size: screenSize, glyphs: glyphs)
+            ConsoleLibraryGrid(driver: driver, lang: lang, compact: compact, size: screenSize, glyphs: glyphs, displayMode: displayMode, viewport: $gridViewport)
         case .cloudSaves: ConsoleCloudSavesPage(rows: state.saveRows, lang: lang, compact: compact, close: { driver.back() })
         case let .gamePad(id):
             if let game = state.games.first(where: { $0.id == id }) {
@@ -714,6 +707,21 @@ enum ConsoleInput {
         case nil: pad.focused = state.exited ? "console.return" : homeTarget
         }
     }
+    /// R3 on the library page: the chips take the focus (the first one), or give it back to the game it was on.
+    private func toggleDisplayMode() {
+        if displayMode {
+            displayMode = false
+            let ids = state.libraryGames.map(\.id)
+            let back = [gridFocusBeforeDisplay, lastGridFocus].compactMap { ConsoleLibraryGrid<Driver>.gameID(of: $0) }.first { ids.contains($0) } ?? ids.first
+            pad.focused = back.map(ConsoleLibraryGrid<Driver>.gameTarget)
+            gridFocusBeforeDisplay = nil
+        } else {
+            gridFocusBeforeDisplay = pad.focused
+            displayMode = true
+            pad.focused = ConsoleLibraryGrid<Driver>.firstChip
+        }
+    }
+
     /// The home row's focused tile as a pad target.
     private var homeTarget: String {
         if state.games.isEmpty { return "console.empty.desktop" }
@@ -724,6 +732,18 @@ enum ConsoleInput {
     /// `isRepeat`: a held direction's repeat (LauncherGamepad.isRepeating, NSEvent.isARepeat) rather than a new press.
     private func handle(_ input: ConsoleInput, isRepeat: Bool = false) {
         if editingOption != nil, input == .back || input == .activate { editingOption = nil; return }   // A or B lets a slider go
+        if displayMode, state.presentedSheet == .libraryGrid {
+            // the chips have the focus: left and right between them, A picks, B or R3 gives the focus back to the grid
+            pad.show(default: pad.focused)
+            switch input {
+            case .left: pad.horizontal(-1)
+            case .right: pad.horizontal(1)
+            case .activate: pad.activate()
+            case .back, .displayMode: toggleDisplayMode()
+            default: break
+            }
+            return
+        }
         if input == .back { driver.back(); return }
         if state.exited { if input == .activate { driver.returnFromGame() }; return }
         guard state.startingGameID == nil else { return }
@@ -752,8 +772,9 @@ enum ConsoleInput {
             guard state.presentedSheet == .libraryGrid else { return }
             let ids = state.libraryGames.map(\.id)
             guard !ids.isEmpty else { return }
-            let current = ConsoleLibraryGrid<Driver>.gameID(of: pad.focused).flatMap { ids.firstIndex(of: $0) }
-            let page = ConsoleLibraryGrid<Driver>.pageSize(size: screenSize, compact: screenSize.width < 650)
+            // from the game focused, or the last one focused in the grid (a filter may have hidden it: then from the first)
+            let current = (ConsoleLibraryGrid<Driver>.gameID(of: pad.focused) ?? ConsoleLibraryGrid<Driver>.gameID(of: lastGridFocus)).flatMap { ids.firstIndex(of: $0) }
+            let page = ConsoleLibraryGrid<Driver>.pageSize(size: screenSize, compact: screenSize.width < 650, viewport: gridViewport)
             let target: Int = switch input {
             case .first: 0
             case .last: ids.count - 1
@@ -761,19 +782,9 @@ enum ConsoleInput {
             default: current.map { min($0 + page, ids.count - 1) } ?? 0
             }
             pad.focused = ConsoleLibraryGrid<Driver>.gameTarget(ids[target])
+        case .displayMode: if state.presentedSheet == .libraryGrid { toggleDisplayMode() }
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
         case .back: break
         }
     }
-}
-/// The width each button of the Home button hint was drawn at, by its pad id: ConsoleTests checks that it is the same in every language.
-struct ConsoleButtonWidths: PreferenceKey {
-    static var defaultValue: [String: CGFloat] = [:]
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) { value.merge(nextValue()) { _, new in new } }
-    static func reader(_ id: String) -> some View { GeometryReader { g in Color.clear.preference(key: ConsoleButtonWidths.self, value: [id: g.size.width]) } }
-}
-
-private struct ConsoleTileFramesKey: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
 }

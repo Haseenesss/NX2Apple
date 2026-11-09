@@ -12,7 +12,8 @@ import os
 /// acts behind a running game.
 final class LauncherGamepad: ObservableObject {
     /// zl and zr: the triggers (ZL / ZR, LT / RT, L2 / R2), read as buttons. Console mode's library page goes to its first or last game with them.
-    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, zl, zr, plus, select }
+    /// rs: the right stick pressed (R3). Console mode's library page shows its display chips with it.
+    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, zl, zr, rs, plus, select }
 
     @Published private(set) var connected = false
     /// `select` is the Select-type button (DualShock Share, DualSense Create, Xbox View, Nintendo Minus): GameController's
@@ -21,6 +22,8 @@ final class LauncherGamepad: ObservableObject {
     /// True while `perform` runs for a held direction's repeat rather than for a new press: console mode's home row stops at its
     /// ends on a repeat and goes round on a new press. Tests set it around a `perform` to act as a held button.
     var isRepeating = false
+    /// The buttons that repeat while held: the directions, and L and R where the console's library page pages with them.
+    var repeats: Set<Action> = [.left, .right, .up, .down]
     /// Sees every press with the controller it came from before it navigates. Returning true consumes it (the Controllers sheet uses
     /// this to give the next press to the player being assigned).
     var capture: ((String, Action) -> Bool)?
@@ -33,7 +36,7 @@ final class LauncherGamepad: ObservableObject {
         var rightStickX: Float = 0, rightStickY: Float = 0
         var a = false, b = false, x = false, y = false
         var l = false, r = false, plus = false, select = false
-        var zl = false, zr = false
+        var zl = false, zr = false, rs = false
     }
 
     static func isJoyCon(category: String?, vendorName: String? = nil) -> Bool {
@@ -51,7 +54,7 @@ final class LauncherGamepad: ObservableObject {
                 ("left", x < -0.5, .left), ("right", x > 0.5, .right), ("up", y > 0.5, .up), ("down", y < -0.5, .down),
                 ("a", input.a, .a), ("b", input.b, .b),   // by label, see `face`
                 ("x", input.x, .x), ("y", input.y, .y),
-                ("l", input.l, .l), ("r", input.r, .r), ("zl", input.zl, .zl), ("zr", input.zr, .zr),
+                ("l", input.l, .l), ("r", input.r, .r), ("zl", input.zl, .zl), ("zr", input.zr, .zr), ("rs", input.rs, .rs),
                 ("plus", input.plus, .plus), ("select", input.select, .select),
             ])]
         }
@@ -166,7 +169,7 @@ final class LauncherGamepad: ObservableObject {
             x: button(GCInputButtonX), y: button(GCInputButtonY),
             l: button(GCInputLeftShoulder), r: button(GCInputRightShoulder),
             plus: button(GCInputButtonMenu), select: button(GCInputButtonOptions),
-            zl: button(GCInputLeftTrigger), zr: button(GCInputRightTrigger)
+            zl: button(GCInputLeftTrigger), zr: button(GCInputRightTrigger), rs: button(GCInputRightThumbstickButton)
         )
         let split = isJoyCon && joyconSplit()
         let groups = Self.states(controller: controller, input: raw, splitJoyCon: split)
@@ -181,7 +184,7 @@ final class LauncherGamepad: ObservableObject {
                 DispatchQueue.main.async {
                     if NSApp.isActive, let capture = self.capture, capture(subID, action) { return }
                     self.fire(action)
-                    if [.left, .right, .up, .down].contains(action) { self.startRepeat(action) }
+                    if self.repeats.contains(action) { self.startRepeat(action) }
                 }
             }
             for action in released { DispatchQueue.main.async { if self.repeating == action { self.stopRepeat() } } }

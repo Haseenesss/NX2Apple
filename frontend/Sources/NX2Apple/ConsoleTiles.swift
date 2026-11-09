@@ -124,3 +124,15 @@ struct ConsoleSaveDotView: View {
             .accessibilityHidden(true)
     }
 }
+
+/// The width each button of the Home button hint was drawn at, by its pad id: ConsoleTests checks that it is the same in every language.
+struct ConsoleButtonWidths: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) { value.merge(nextValue()) { _, new in new } }
+    static func reader(_ id: String) -> some View { GeometryReader { g in Color.clear.preference(key: ConsoleButtonWidths.self, value: [id: g.size.width]) } }
+}
+
+struct ConsoleTileFramesKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { _, new in new } }
+}

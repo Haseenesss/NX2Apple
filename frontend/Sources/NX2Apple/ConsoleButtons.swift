@@ -24,6 +24,7 @@ enum ConsoleButtons {
         case .r: return "R"
         case .zl: return "ZL"
         case .zr: return "ZR"
+        case .rs: return "RS"
         case .left, .right, .up, .down: return nil
         }
     }
@@ -44,6 +45,7 @@ enum ConsoleButtons {
         case .r: return .pageForward
         case .zl: return .first
         case .zr: return .last
+        case .rs: return .displayMode
         default: return bindings(swapAB: swapAB)[action]
         }
     }
