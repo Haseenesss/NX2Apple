@@ -314,7 +314,7 @@ import NXModel
         for (sizeName, width, height) in [("1920", CGFloat(1920), CGFloat(1080)), ("compact", 390, 844)] {
             for (name, scenario, family) in [("home", MockConsoleDriver.Scenario.full, ConsoleGlyphs.Family.xbox), ("home-dualsense", .full, .playStation), ("home-keyboard", .full, .keyboard),
                                              ("controllers", .controllersMixed, .xbox), ("home-4pads", .controllersMixed, .xbox), ("controllers-wired", .controllers, .xbox), ("options", .full, .xbox), ("empty", .empty, .xbox), ("starting", .starting, .xbox),
-                                             ("home-tile", .full, .xbox), ("menu", .full, .xbox), ("libraryGrid", .full, .xbox), ("general", .full, .xbox), ("update", .full, .xbox), ("leave", .full, .xbox),
+                                             ("home-tile", .full, .xbox), ("menu", .full, .xbox), ("libraryGrid", .full, .xbox), ("general", .full, .xbox), ("appearance", .full, .xbox), ("update", .full, .xbox), ("leave", .full, .xbox),
                                              ("mapping", .full, .xbox), ("mapping-button", .full, .xbox), ("mapping-save", .full, .xbox),
                                              ("game-controller", .full, .xbox), ("game-mapping", .full, .xbox), ("advanced", .full, .xbox),
                                              ("reset", .full, .xbox), ("cloud-saves", .full, .xbox), ("not-built", .full, .xbox)] {
@@ -326,6 +326,7 @@ import NXModel
                 case "home-tile": driver.focusLibraryTile()
                 case "libraryGrid": driver.openLibrary()
                 case "general": driver.openMenu(); driver.openSettings()
+                case "appearance": driver.openMenu(); driver.openSettings(); driver.openAppearance()
                 case "update": driver.openMenu(); driver.openSettings(); driver.appUpdateAction()
                 case "leave": driver.back()
                 case "mapping": driver.openMenu(); driver.openMapping()
@@ -359,6 +360,10 @@ import NXModel
         XCTAssertEqual(driver.state.prefs.batteryStyle, .both)
         driver.setBatteryStyle(.hidden)
         XCTAssertEqual(driver.state.prefs.batteryStyle, .hidden)
+        driver.openMenu(); driver.openSettings(); driver.openAppearance()
+        XCTAssertEqual(driver.state.presentedSheet, .appearance, "Appearance is a page of its own under General")
+        XCTAssertEqual(ConsoleNotch.room(inset: 0, screenWidth: 1512).panelWidth, nil, "no housing, no limit")
+        XCTAssertEqual(ConsoleNotch.room(inset: 32, screenWidth: 1512).panelWidth, 632, "a panel from the trailing edge stays right of the housing")
         XCTAssertNil(ConsoleBatteryStyle(rawValue: "bogus"))
         XCTAssertTrue(ConsoleBatteryStyle.icon.showsIcon); XCTAssertFalse(ConsoleBatteryStyle.icon.showsPercent)
         XCTAssertTrue(ConsoleBatteryStyle.percent.showsPercent); XCTAssertFalse(ConsoleBatteryStyle.percent.showsIcon)

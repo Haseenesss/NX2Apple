@@ -183,6 +183,7 @@ import NXLauncher
     func setLibrarySort(_ sort: ConsoleLibrarySort) { state.librarySort = sort }
     func openSettings() { state.openSettings() }
     func openLanguage() { state.openLanguage() }
+    func openAppearance() { state.openAppearance() }
     func setMenuSwapAB(_ on: Bool) {
         if state.mappingOrigin != nil { state.pendingMenuSwapAB = on } else { state.menuSwapAB = on }
     }
