@@ -11,7 +11,8 @@ import os
 /// started is in front then, and GameController gives a controller's input to the app in front, so the launcher never
 /// acts behind a running game.
 final class LauncherGamepad: ObservableObject {
-    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, plus, select }
+    /// zl and zr: the triggers (ZL / ZR, LT / RT, L2 / R2), read as buttons. Console mode's library page goes to its first or last game with them.
+    enum Action: Equatable { case left, right, up, down, a, b, x, y, l, r, zl, zr, plus, select }
 
     @Published private(set) var connected = false
     /// `select` is the Select-type button (DualShock Share, DualSense Create, Xbox View, Nintendo Minus): GameController's
@@ -32,6 +33,7 @@ final class LauncherGamepad: ObservableObject {
         var rightStickX: Float = 0, rightStickY: Float = 0
         var a = false, b = false, x = false, y = false
         var l = false, r = false, plus = false, select = false
+        var zl = false, zr = false
     }
 
     static func isJoyCon(category: String?, vendorName: String? = nil) -> Bool {
@@ -49,7 +51,7 @@ final class LauncherGamepad: ObservableObject {
                 ("left", x < -0.5, .left), ("right", x > 0.5, .right), ("up", y > 0.5, .up), ("down", y < -0.5, .down),
                 ("a", input.a, .a), ("b", input.b, .b),   // by label, see `face`
                 ("x", input.x, .x), ("y", input.y, .y),
-                ("l", input.l, .l), ("r", input.r, .r),
+                ("l", input.l, .l), ("r", input.r, .r), ("zl", input.zl, .zl), ("zr", input.zr, .zr),
                 ("plus", input.plus, .plus), ("select", input.select, .select),
             ])]
         }
@@ -163,7 +165,8 @@ final class LauncherGamepad: ObservableObject {
             a: button(GCInputButtonA), b: button(GCInputButtonB),
             x: button(GCInputButtonX), y: button(GCInputButtonY),
             l: button(GCInputLeftShoulder), r: button(GCInputRightShoulder),
-            plus: button(GCInputButtonMenu), select: button(GCInputButtonOptions)
+            plus: button(GCInputButtonMenu), select: button(GCInputButtonOptions),
+            zl: button(GCInputLeftTrigger), zr: button(GCInputRightTrigger)
         )
         let split = isJoyCon && joyconSplit()
         let groups = Self.states(controller: controller, input: raw, splitJoyCon: split)

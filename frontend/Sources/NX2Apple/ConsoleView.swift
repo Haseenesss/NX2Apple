@@ -6,10 +6,12 @@ import NXLauncher
 /// Semantic inputs from a future controller adapter; the view does not discover hardware.
 enum ConsoleInput {
     case left, right, up, down, activate, back, options, menu
+    /// The library page's: a screen back or on (L, R), its first or last game (ZL, ZR). Nothing elsewhere.
+    case pageBack, pageForward, first, last
 
     /// The launcher's controller path (Gamepad.swift) in console terms: the D-pad and left stick move, A activates, B backs out,
     /// Y opens the focused game's options, the menu button (+, Menu, Options) and the Select-type button (−, View, Share,
-    /// Create) the console's menu. The same button again closes what it opened. X, L and R are not used.
+    /// Create) the console's menu. The same button again closes what it opened. L, R, ZL and ZR page the library. X is not used.
     init?(_ action: LauncherGamepad.Action) {
         switch action {
         case .left: self = .left
@@ -20,7 +22,11 @@ enum ConsoleInput {
         case .b: self = .back
         case .y: self = .options
         case .plus, .select: self = .menu
-        case .x, .l, .r: return nil
+        case .l: self = .pageBack
+        case .r: self = .pageForward
+        case .zl: self = .first
+        case .zr: self = .last
+        case .x: return nil
         }
     }
 }
@@ -47,6 +53,8 @@ enum ConsoleInput {
     @State private var editingOption: String?
     /// The focused home tile's nudge towards the end of the row a held direction stopped at (6 pt, then back).
     @State private var edgeNudge: CGFloat = 0
+    /// The console's size, for how far L and R move in the library page's grid.
+    @State private var screenSize: CGSize = .zero
     /// The home row's last tile, the way to the library page.
     static var libraryTileID: String { "console.library.tile" }
 
@@ -82,6 +90,14 @@ enum ConsoleInput {
                     // The question to leave is drawn over what it was asked from, which stays in view but takes no input.
                     let confirming = state.presentedSheet?.isQuestion == true
                     let shown = confirming ? state.sheets.dropLast().last : state.presentedSheet
+                    // a panel opened over a page of the whole screen (a game's options over the library) keeps that page in view under it
+                    let under = shown.flatMap { $0.isFullScreen ? nil : state.sheets.dropLast(confirming ? 2 : 1).last }.flatMap { $0.isFullScreen ? $0 : nil }
+                    if let page = under {
+                        fullPage(page, compact: compact)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .background(LauncherPalette.background)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
                     Group {
                         if let sheet = shown, sheet.isFullScreen {
                             // a page of its own over the whole screen, not a panel at the side
@@ -115,6 +131,8 @@ enum ConsoleInput {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
+            .onAppear { screenSize = geometry.size }
+            .onChange(of: geometry.size) { screenSize = $0 }
         }
         .background(LauncherPalette.background)
         .foregroundStyle(.white)
@@ -351,12 +369,11 @@ enum ConsoleInput {
                 if let game = state.games.first(where: { $0.id == id }) { explanation(game, compact: compact) }
             case .homeButtonHint: homeButtonHint(compact: compact)
             case .menu: menu(compact: compact)
-            case .library: library(compact: compact)
             case .settings: settings(compact: compact)
             case .language: language(compact: compact)
             case let .advanced(id):
                 if let game = state.games.first(where: { $0.id == id }) { advanced(game, compact: compact) }
-            case .mapping, .gamePad, .cloudSaves, .confirmExit, .confirmMapping, .confirmReset, .confirmUpdate: EmptyView()   // drawn over the whole screen (fullPage, question)
+            case .libraryGrid, .mapping, .gamePad, .cloudSaves, .confirmExit, .confirmMapping, .confirmReset, .confirmUpdate: EmptyView()   // drawn over the whole screen (fullPage, question)
             }
         }
         .padScope(sheet.scope, pad)
@@ -440,6 +457,8 @@ enum ConsoleInput {
     /// The pages over the whole screen: the cloud saves, a game's controller settings, the button mapping.
     @ViewBuilder private func fullPage(_ sheet: ConsoleSheet, compact: Bool) -> some View {
         switch sheet {
+        case .libraryGrid:
+            ConsoleLibraryGrid(driver: driver, lang: lang, compact: compact, size: screenSize, glyphs: glyphs)
         case .cloudSaves: ConsoleCloudSavesPage(rows: state.saveRows, lang: lang, compact: compact, close: { driver.back() })
         case let .gamePad(id):
             if let game = state.games.first(where: { $0.id == id }) {
@@ -474,18 +493,6 @@ enum ConsoleInput {
 
     /// "Follow the system" by its name in the launcher's language, every other language by its own name (as Settings lists them).
     private func languageName(_ code: String) -> String { code.isEmpty ? t("settings.language.system") : (Lang.find(code)?.name ?? code) }
-
-    /// The Library page (ConsoleLibraryList): the library's switch and the cloud saves.
-    private func library(compact: Bool) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                ConsoleLibraryList(driver: driver, lang: lang, compact: compact)
-                    .padding(.horizontal, compact ? 24 : 40).padding(.bottom, compact ? 24 : 40)
-            }
-            .consoleScrollFade()
-            .onChange(of: pad.focused) { id in if let id { withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) { proxy.scrollTo(id, anchor: .center) } } }
-        }
-    }
 
     /// The Settings page (ConsoleSettingsList): the language, the app's update and the launcher after a game.
     private func settings(compact: Bool) -> some View {
@@ -640,7 +647,7 @@ enum ConsoleInput {
         case .menu: return "console.menu"
         case .mapping: return state.mappingGameID == nil ? "console.mapping" : "console.mapping.game"
         case .gamePad: return "console.gamePad"
-        case .library: return "console.menu.library"
+        case .libraryGrid: return "console.menu.library"
         case .settings: return "console.menu.settings"
         case .language: return "console.language.title"
         case .cloudSaves: return "console.saves.title"
@@ -654,6 +661,7 @@ enum ConsoleInput {
     private func resetFocus() {
         // A sheet opening keeps the focus it covers, a sheet closing gives it back, read before the new scope clears it.
         let depth = state.sheets.count
+        let fromLibrary = pad.scope == ConsoleLibraryGrid<Driver>.scope   // the scope being left: the library page puts the home focus where the state says
         var restored: String?
         if depth > sheetDepth { returnFocus.append(pad.focused) }
         while returnFocus.count > depth { restored = returnFocus.removeLast() }
@@ -661,7 +669,7 @@ enum ConsoleInput {
         pad.scope = scope
         pad.show(default: nil)
         // a target gone by now falls back at the next press (PadFocus.show); on the home row the state says where the focus is (the row reorders)
-        if let restored, !state.exited, !(state.presentedSheet == nil && isRowTarget(restored)) { pad.focused = restored; return }
+        if let restored, !state.exited, !(state.presentedSheet == nil && (isRowTarget(restored) || fromLibrary)) { pad.focused = restored; return }
         switch state.presentedSheet {
         case let .options(id):
             let game = state.games.first { $0.id == id }
@@ -672,7 +680,11 @@ enum ConsoleInput {
         case .homeButtonHint: pad.focused = "console.homeHint.open"
         case .menu: pad.focused = "console.menu.library"
         case .cloudSaves: pad.focused = ConsoleCloudSaves.sorted(state.saveRows).first.map { "console.saves.row." + $0.id } ?? "console.saves.close"   // the first row as the page sorts them
-        case .library: pad.focused = ConsolePref.onLibrary.first.map { "console.pref." + $0.rawValue } ?? "console.library.saves"
+        case .libraryGrid:
+            // the game focused on the home row (the first one from the library tile)
+            let games = state.libraryGames
+            let game = state.homeFocusedGame.flatMap { home in games.first { $0.id == home.id } } ?? games.first
+            pad.focused = game.map { ConsoleLibraryGrid<Driver>.gameTarget($0.id) } ?? ConsoleLibraryGrid<Driver>.firstChip
         case .settings: pad.focused = "console.settings.language"
         case .language: pad.focused = "console.language." + (languageCode.isEmpty ? "system" : languageCode)
         case .confirmExit: pad.focused = "console.confirmExit.leave"
@@ -716,6 +728,21 @@ enum ConsoleInput {
         case .options:
             if case .options = state.presentedSheet { driver.back() }
             else if state.presentedSheet == nil, !state.libraryTileFocused, let id = state.homeFocusedGame?.id { driver.openOptions(id) }
+            else if state.presentedSheet == .libraryGrid, let id = ConsoleLibraryGrid<Driver>.gameID(of: pad.focused) { driver.openOptions(id) }
+        case .pageBack, .pageForward, .first, .last:
+            // the library page's grid: a screen back or on, its first or last game; it stops at either end
+            guard state.presentedSheet == .libraryGrid else { return }
+            let ids = state.libraryGames.map(\.id)
+            guard !ids.isEmpty else { return }
+            let current = ConsoleLibraryGrid<Driver>.gameID(of: pad.focused).flatMap { ids.firstIndex(of: $0) }
+            let page = ConsoleLibraryGrid<Driver>.pageSize(size: screenSize, compact: screenSize.width < 650)
+            let target: Int = switch input {
+            case .first: 0
+            case .last: ids.count - 1
+            case .pageBack: max((current ?? 0) - page, 0)
+            default: current.map { min($0 + page, ids.count - 1) } ?? 0
+            }
+            pad.focused = ConsoleLibraryGrid<Driver>.gameTarget(ids[target])
         case .menu: if state.presentedSheet == .menu { driver.back() } else if state.presentedSheet == nil { driver.openMenu() }
         case .back: break
         }

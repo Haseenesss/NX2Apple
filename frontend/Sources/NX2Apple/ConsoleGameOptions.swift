@@ -264,28 +264,6 @@ struct ConsoleSwitchRow: View {
     }
 }
 
-/// The Library page: the library's switch (only built games), and the way to the cloud saves page.
-@MainActor struct ConsoleLibraryList<Driver: ConsoleDriver>: View {
-    @ObservedObject var driver: Driver
-    let lang: Lang
-    let compact: Bool
-    static var scope: String { "console.library" }
-    private var scope: String { Self.scope }
-    private func t(_ key: String) -> String { L10n.string(key, lang) }
-    private var prefs: ConsolePrefs { driver.state.prefs }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(ConsolePref.onLibrary, id: \.self) { pref in
-                ConsoleSwitchRow(id: "console.pref." + pref.rawValue, scope: scope, title: t(pref.titleKey), note: t(pref.noteKey),
-                                 isOn: prefs[pref], compact: compact) { driver.setPref(pref, on: !prefs[pref]) }
-            }
-            ConsoleMenuRow(id: "console.library.saves", scope: scope, symbol: "icloud", title: t(ConsoleCloudSaves.menuKey),
-                           note: t(ConsoleCloudSaves.menuNoteKey), compact: compact) { driver.openCloudSaves() }
-        }
-    }
-}
-
 /// The Settings page: the display language (a page of its own), the app's update, and the launcher's switch for after a game quits.
 @MainActor struct ConsoleSettingsList<Driver: ConsoleDriver>: View {
     @ObservedObject var driver: Driver

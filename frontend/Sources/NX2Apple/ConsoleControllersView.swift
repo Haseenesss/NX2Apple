@@ -24,6 +24,8 @@ import NXLauncher
     func identify(controllerID: String) { base.identify(controllerID: controllerID) }
     func openMenu() { base.openMenu() }
     func openLibrary() { base.openLibrary() }
+    func pickFromLibrary(_ gameID: String) { base.pickFromLibrary(gameID) }
+    func setLibrarySort(_ sort: ConsoleLibrarySort) { base.setLibrarySort(sort) }
     func openSettings() { base.openSettings() }
     func openCloudSaves() { base.openCloudSaves() }
     func openLanguage() { base.openLanguage() }

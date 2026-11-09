@@ -248,6 +248,8 @@ struct ConsolePadSnapshot: Equatable {
 
     func focus(_ gameID: String) { state.focus(gameID); loadHero() }
     func focusLibraryTile() { state.focusLibraryTile() }
+    func pickFromLibrary(_ gameID: String) { state.pickFromLibrary(gameID); loadHero() }
+    func setLibrarySort(_ sort: ConsoleLibrarySort) { state.librarySort = sort }
 
     func play(_ gameID: String) {
         state.play(gameID)

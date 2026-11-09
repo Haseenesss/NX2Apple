@@ -141,13 +141,14 @@ enum ConsoleSheet: Equatable {
     /// menu: the console's own menu (Library, Controllers, Settings, leaving console mode), on the Select-type button.
     /// mapping: what each controller button sends in games, for all games (the Controls page's controller layout).
     /// gamePad: a game's controller settings (its Controls rows: rumble, and its own button mapping), opened from its options.
-    /// library: the menu's Library page (the library's switch, the way to the cloud saves). settings: its Settings page (the display
+    /// libraryGrid: the library page over the whole screen, every game in a grid under its sort, its filter and the way to the cloud
+    /// saves (the home row's last tile, down on the row, and the menu's Library). settings: the menu's Settings page (the display
     /// language, the app's update, the launcher after a game), language: the display language list.
     /// cloudSaves: each game's cloud save state and time, as a page of its own over the whole screen.
     /// confirmExit: "Leave console mode?", over what is open (the menu's Exit, or B on the home screen).
     /// confirmMapping: "Save changes?", leaving the button mapping after something on it changed.
     /// advanced: a game's advanced options. confirmReset: "Reset this game's options?". confirmUpdate: install the app's update, or restart into it.
-    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), library, settings, language, cloudSaves, confirmExit, confirmMapping
+    case options(String), controllers, explanation(String), homeButtonHint, menu, mapping, gamePad(String), libraryGrid, settings, language, cloudSaves, confirmExit, confirmMapping
     case advanced(String), confirmReset(String), confirmUpdate
     /// The questions drawn in the middle of the screen, over what they were asked from.
     var isQuestion: Bool {
@@ -156,10 +157,10 @@ enum ConsoleSheet: Equatable {
         default: return false
         }
     }
-    /// Pages over the whole screen rather than a panel at the side: the cloud saves, a game's controller settings, the button mapping.
+    /// Pages over the whole screen rather than a panel at the side: the library, the cloud saves, a game's controller settings, the button mapping.
     var isFullScreen: Bool {
         switch self {
-        case .cloudSaves, .gamePad, .mapping: return true
+        case .libraryGrid, .cloudSaves, .gamePad, .mapping: return true
         default: return false
         }
     }
@@ -172,7 +173,7 @@ enum ConsoleSheet: Equatable {
         case .confirmReset: return "console.confirmReset"
         case .confirmUpdate: return "console.confirmUpdate"
         case .cloudSaves: return "console.saves"   // ConsoleCloudSavesPage.scope
-        case .library: return "console.library"
+        case .libraryGrid: return "console.grid"   // ConsoleLibraryGrid.scope
         case .settings: return "console.settings"
         case .options: return "console.options"
         case .gamePad: return "console.gamePad"
@@ -221,6 +222,12 @@ struct ConsolePadLayout: Equatable {
     var isDefault: Bool { gameTitle == nil ? mode == .standard && sends.isEmpty : sends == baseline }
 }
 
+/// The library page's order (ConsoleState.librarySort).
+enum ConsoleLibrarySort: String, CaseIterable {
+    case recent, name
+    var titleKey: String { "console.grid.sort." + rawValue }
+}
+
 struct ConsoleState {
     /// Every game the library shows (its filter applied): the library page's grid. The home row is `homeGames`.
     var games: [ConsoleGame] = []
@@ -229,6 +236,15 @@ struct ConsoleState {
     var libraryTileFocused = false
     /// The game picked on the library page: it leads the home row until another game is played (its lastPlayed is not changed).
     var frontGameID: String?
+    /// The library page's order: the most recently played first, or by name.
+    var librarySort: ConsoleLibrarySort = .recent
+    /// The library page's grid, in its order.
+    var libraryGames: [ConsoleGame] {
+        switch librarySort {
+        case .recent: return ConsoleGame.recentFirst(games)
+        case .name: return games.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        }
+    }
     /// A stack allows an explanation or Controllers to return to the options underneath it.
     var sheets: [ConsoleSheet] = []
     var controllers: [ConsoleController] = []
@@ -343,8 +359,17 @@ struct ConsoleState {
         sheets.append(.cloudSaves)
     }
     mutating func openLibrary() {
-        guard !exited, startingGameID == nil, presentedSheet != .library else { return }
-        sheets.append(.library)
+        guard !exited, startingGameID == nil, presentedSheet != .libraryGrid else { return }
+        sheets.append(.libraryGrid)
+    }
+    /// A on a game in the library page: back to the home screen with that game first in the row and focused. Starting it is the
+    /// home screen's A, so the grid never starts a game by accident.
+    mutating func pickFromLibrary(_ id: String) {
+        guard !exited, startingGameID == nil, presentedSheet == .libraryGrid, games.contains(where: { $0.id == id }) else { return }
+        frontGameID = id
+        focusedGameID = id
+        libraryTileFocused = false
+        sheets = []
     }
     mutating func openSettings() {
         guard !exited, startingGameID == nil, presentedSheet != .settings else { return }
@@ -409,6 +434,7 @@ struct ConsoleState {
         if presentedSheet == .mapping, mappingRow != nil { mappingRow = nil; return }   // B in a button's choices goes back to the list
         if presentedSheet == .mapping, mappingChanged { sheets.append(.confirmMapping); return }   // asks before leaving changes
         if presentedSheet == .mapping { mappingOrigin = nil; pendingMenuSwapAB = nil; mappingUndo = nil }
+        if presentedSheet == .libraryGrid, sheets.count == 1 { libraryTileFocused = true }   // back on the home row at the tile it opens from
         if !sheets.isEmpty {
             if presentedSheet == .mapping { mappingGameID = nil }
             sheets.removeLast(); assigningPlayer = nil; assigningControllerID = nil; mappingRow = nil
@@ -445,8 +471,11 @@ struct ConsoleState {
     func openControllers()
     /// The console's menu (the Select-type button, or the menu button in the top bar).
     func openMenu()
-    /// The menu's Library and Settings pages, and the cloud saves page (from Library).
+    /// The library page (ConsoleLibraryGrid), the menu's Settings page, and the cloud saves page (from the library page).
     func openLibrary()
+    /// The library page's A on a game, and its order.
+    func pickFromLibrary(_ gameID: String)
+    func setLibrarySort(_ sort: ConsoleLibrarySort)
     func openSettings()
     func openCloudSaves()
     /// The Settings page's display language list.
@@ -515,6 +544,8 @@ extension ConsoleDriver {
     func finishMapping(save: Bool) {}
     func openGameMapping(_ gameID: String) {}
     func openLibrary() {}
+    func pickFromLibrary(_ gameID: String) {}
+    func setLibrarySort(_ sort: ConsoleLibrarySort) {}
     func openSettings() {}
     func openCloudSaves() {}
     func openLanguage() {}

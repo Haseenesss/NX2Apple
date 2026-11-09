@@ -179,6 +179,8 @@ import NXLauncher
     }
     func openMenu() { state.openMenu() }
     func openLibrary() { state.openLibrary() }
+    func pickFromLibrary(_ gameID: String) { state.pickFromLibrary(gameID) }
+    func setLibrarySort(_ sort: ConsoleLibrarySort) { state.librarySort = sort }
     func openSettings() { state.openSettings() }
     func openLanguage() { state.openLanguage() }
     func setMenuSwapAB(_ on: Bool) {

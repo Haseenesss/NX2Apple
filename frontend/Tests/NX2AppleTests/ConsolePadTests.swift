@@ -71,7 +71,7 @@ import NXModel
     func testGamepadActionsMapToConsoleInputs() {
         let expected: [(LauncherGamepad.Action, ConsoleInput?)] = [
             (.left, .left), (.right, .right), (.up, .up), (.down, .down), (.a, .activate), (.b, .back),
-            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, nil), (.r, nil)]
+            (.y, .options), (.x, nil), (.plus, .menu), (.select, .menu), (.l, .pageBack), (.r, .pageForward), (.zl, .first), (.zr, .last)]
         for (action, input) in expected { XCTAssertEqual(ConsoleInput(action), input, "\(action)") }
     }
 
@@ -101,7 +101,7 @@ import NXModel
         gamepad.perform(.plus); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "the menu button opens the menu")
         gamepad.perform(.a); settle()
-        XCTAssertEqual(driver.state.presentedSheet, .library, "the menu's first row is Library")
+        XCTAssertEqual(driver.state.presentedSheet, .libraryGrid, "the menu's first row is the library page")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .menu, "B goes back to the menu")
         gamepad.perform(.plus); settle()
@@ -121,7 +121,7 @@ import NXModel
         gamepad.perform(.b); settle()
         XCTAssertNil(driver.state.presentedSheet)
         gamepad.perform(.l); gamepad.perform(.r); settle()
-        XCTAssertNil(driver.state.presentedSheet, "L and R do nothing")
+        XCTAssertNil(driver.state.presentedSheet, "L and R do nothing on the home screen")
         gamepad.perform(.b); settle()
         XCTAssertEqual(driver.state.presentedSheet, .confirmExit, "B from Home asks before leaving")
         XCTAssertFalse(driver.state.exited)

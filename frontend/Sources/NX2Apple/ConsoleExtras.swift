@@ -44,7 +44,6 @@ enum ConsolePref: String, CaseIterable {
     var titleKey: String { "console.pref." + rawValue }
     var noteKey: String { "console.pref." + rawValue + "Note" }
     /// The switches of each page, in their order.
-    static let onLibrary: [ConsolePref] = [.onlyBuilt]
     static let onControllers: [ConsolePref] = [.startInConsole, .promptOnController]
     static let onSettings: [ConsolePref] = [.returnAfterPlay]
 }

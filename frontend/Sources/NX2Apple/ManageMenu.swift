@@ -69,7 +69,7 @@ enum ManagePad {
     enum Route: Equatable {
         case open       // Y: open the selected game's menu
         case close      // B: close it
-        case swallow    // X, Y, L and R while it is open: nothing happens behind it
+        case swallow    // X, Y, L, R, ZL and ZR while it is open: nothing happens behind it
         case pass       // the D-pad and A (PadFocus moves or activates in the menu's scope), or any button with the menu closed
     }
 
@@ -77,7 +77,7 @@ enum ManagePad {
         if menuOpen {
             switch action {
             case .b: return .close
-            case .x, .y, .l, .r, .plus, .select: return .swallow
+            case .x, .y, .l, .r, .zl, .zr, .plus, .select: return .swallow
             case .up, .down, .left, .right, .a: return .pass
             }
         }

@@ -6,6 +6,7 @@
     {"prefix": "artwork.reset.", "suffix": "", "why": "the Reset button of each artwork tab, ArtworkPanel.swift"},
     {"prefix": "artwork.tab.", "suffix": "", "why": "the name of each artwork tab, ArtworkPanel.swift"},
     {"prefix": "console.battery.style.", "suffix": "", "why": "the ways the top bar's chips show the battery, ConsoleExtras.swift"},
+    {"prefix": "console.grid.sort.", "suffix": "", "why": "the library page's orders, ConsoleState.swift (ConsoleLibrarySort)"},
     {"prefix": "console.kind.", "suffix": "", "why": "the controller kinds, ConsoleState.swift"},
     {"prefix": "console.mapping.place.", "suffix": "", "why": "where each controller button sits, by its DM_PAD_MAP name, ConsolePadMappingView.swift"},
     {"prefix": "console.platform.", "suffix": "", "why": "the platforms of a game, ConsoleState.swift"},
