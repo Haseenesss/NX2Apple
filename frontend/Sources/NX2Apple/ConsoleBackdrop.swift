@@ -10,6 +10,10 @@ struct ConsoleBackdrop: View {
     let starting: Bool
     let size: CGSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dsMotionSpeed) private var motionSpeed
+    /// The art the screen showed before the switch, drawn whole under the new one while that one fades in, then replaced by it
+    /// (#1513). A fading-out old art let the dark page show through, and its removal did not even fade: the first frame went black.
+    @State private var under: ConsoleGame?
     private let bg = LauncherPalette.background
 
     /// The sharp art's share of the screen, from the top right corner.
@@ -19,16 +23,13 @@ struct ConsoleBackdrop: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             bg
+            if let under, let game, under.id != game.id { art(under).transition(.identity) }
             if let game {
-                Group {
-                    if starting { cover(game).overlay(Color.black.opacity(0.55)) }   // a scrim keeps the Starting text readable on any cover
-                    else { home(game) }
-                }
-                .saturation(LibraryArtworkTone.saturation(muted: game.needsMutedArtworkTone))
-                // The same game's large image arriving later replaces its cover with a short fade. Inside the game's identity, so it
-                // runs only for that game, and a switch to another one keeps the cross-fade below.
-                .animation(ConsoleHomeMotion.heroArrival(reduceMotion: reduceMotion), value: game.hero != nil)
-                .id(game.id).transition(ConsoleHomeMotion.artworkTransition)
+                art(game)
+                    // The same game's large image arriving later replaces its cover with a short fade. Inside the game's identity, so
+                    // it runs only for that game, and a switch to another one keeps the fade below.
+                    .animation(ConsoleHomeMotion.heroArrival(reduceMotion: reduceMotion), value: game.hero != nil)
+                    .id(game.id).transition(ConsoleHomeMotion.artworkTransition)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -38,8 +39,23 @@ struct ConsoleBackdrop: View {
                     .frame(height: min(300, size.height * 0.32)).allowsHitTesting(false)
             }
         }
-        .dsAnimation(ConsoleHomeMotion.artwork(reduceMotion: reduceMotion), value: game?.id)   // the art cross-fades, short and quiet
+        .dsAnimation(ConsoleHomeMotion.artwork(reduceMotion: reduceMotion), value: game?.id)   // the new art fades in, short and quiet
         .clipped().ignoresSafeArea().accessibilityHidden(true)
+        // Once the new art is whole, it is the one under the next switch. Another switch first cancels this and keeps the old art.
+        .task(id: game?.id) {
+            let fade = ConsoleHomeMotion.artwork(reduceMotion: reduceMotion) == nil
+                ? 0 : DS.Motion.duration(ConsoleHomeMotion.artworkSeconds, speed: motionSpeed)
+            if fade > 0, under != nil { do { try await Task.sleep(nanoseconds: UInt64((fade + 0.05) * 1e9)) } catch { return } }
+            under = game
+        }
+    }
+
+    private func art(_ game: ConsoleGame) -> some View {
+        Group {
+            if starting { cover(game).overlay(Color.black.opacity(0.55)) }   // a scrim keeps the Starting text readable on any cover
+            else { home(game) }
+        }
+        .saturation(LibraryArtworkTone.saturation(muted: game.needsMutedArtworkTone))
     }
 
     private func image(_ game: ConsoleGame) -> NSImage? { game.hero ?? game.artwork }

@@ -43,16 +43,17 @@ struct ConsoleClock: View {
 
 /// How the console home moves when another game is focused: plainly, as a console's home scrolls its covers. The focused cover keeps
 /// its place at the row's leading edge and the row moves under it in a short ease (the PlayStation 5 model). The focus ring and scale
-/// finish with it. The title changes at once. The art behind changes with a short, quiet cross-fade. No blur, no zoom, no slide, no
+/// finish with it. The title changes at once. The art behind changes with a short, quiet fade. No blur, no zoom, no slide, no
 /// spring. Under Reduce Motion everything is instant.
 enum ConsoleHomeMotion {
     /// The row's move to the next cover, and the focused cover's ring and scale with it.
     static func row(reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .easeOut(duration: 0.14) }
     /// The title: no animation, the new one replaces the old one in the same frame.
     static let title: Animation? = nil
-    /// Another game's art: a short cross-fade.
-    static func artwork(reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .easeOut(duration: 0.2) }
-    static let artworkTransition: AnyTransition = .opacity
+    /// Another game's art: a short fade in, over the old art, which stays whole until the new one is (ConsoleBackdrop).
+    static func artwork(reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .easeOut(duration: artworkSeconds) }
+    static let artworkSeconds = 0.2
+    static let artworkTransition: AnyTransition = .asymmetric(insertion: .opacity, removal: .identity)
     /// The same game's large image arriving later replaces its cover with the same short fade.
     static func heroArrival(reduceMotion: Bool) -> Animation? { artwork(reduceMotion: reduceMotion) }
     /// A tile's focus ring and scale: with the row on the home row (`homeRow`), a little longer in a grid (all games, the search).
@@ -70,7 +71,6 @@ enum ConsoleHomeMotion {
     let glyphs: ConsoleGlyphs
     let size: CGSize
     let compact: Bool
-    var launchNamespace: Namespace.ID? = nil
     var floatingPanelChrome = false
     /// Whether the top bar shows the build indicator (ConsoleView decides: something builds or just finished, not expired).
     var showBuild = false
@@ -252,7 +252,7 @@ enum ConsoleHomeMotion {
         } label: {
             ConsoleGameTile(game: game, selected: selected, compact: compact, lang: lang, captionVisible: captionVisible, paused: paused,
                             homeRow: true,
-                            showsSelection: !pad.visible || pad.focused == "console.game." + game.id, launchNamespace: selected ? launchNamespace : nil)
+                            showsSelection: !pad.visible || pad.focused == "console.game." + game.id)
                 .frame(width: tileWidth)
                 .contentShape(RoundedRectangle(cornerRadius: 16))
         }
@@ -286,6 +286,7 @@ enum ConsoleHomeMotion {
                 Text(t("console.allGames")).opacity(captionVisible ? 1 : 0)
                     .font(DS.Console.Font.callout).lineLimit(1)
                     .foregroundStyle(selected ? DS.Color.textPrimary : DS.Color.textSecondary)
+                    .contentTransition(.identity)   // as the game tiles' captions (ConsoleGameTile)
                     .padding(.horizontal, DS.Space.xxs).accessibilityHidden(true)
             }
             .frame(width: tileWidth)

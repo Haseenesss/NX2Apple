@@ -73,7 +73,6 @@ enum ConsoleInput: Equatable {
     @StateObject private var completionDismissal: BuildCompletionDismissal
     @State private var indicatorReady = false
     @State private var launchTitleVisible = false
-    @Namespace private var launchArtwork
     private var state: ConsoleState { driver.state }
     private var completionKey: String? {
         guard !state.builds.running, let row = state.builds.indicatorRow,
@@ -96,7 +95,7 @@ enum ConsoleInput: Equatable {
                 } else if let game = state.startingGame {
                     starting(game, compact: compact).transition(.identity)
                 } else {
-                    ConsoleHomeScreen(driver: driver, lang: lang, glyphs: glyphs, size: geometry.size, compact: compact, launchNamespace: reduceMotion ? nil : launchArtwork,
+                    ConsoleHomeScreen(driver: driver, lang: lang, glyphs: glyphs, size: geometry.size, compact: compact,
                                       showBuild: showBuild)
                         .allowsHitTesting(state.presentedSheet == nil)
                         .disabled(state.presentedSheet != nil)

@@ -55,7 +55,6 @@ struct ConsoleGameTile: View {
     /// A cover of the home row: the focused one is a little larger. Flat, in a straight row, no fan or tilt.
     var homeRow = false
     var showsSelection = true
-    var launchNamespace: Namespace.ID? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var artworkState: LibraryArtworkState { LibraryArtworkState(game) }
     /// nxkit built it without a game profile (v0lumehi/nxkit#54): a quiet neutral chip, before Different tools, since the game may not
@@ -101,13 +100,15 @@ struct ConsoleGameTile: View {
                                                                                     lineWidth: selected && showsSelection ? DS.Console.Control.focusRing : 1))
             // Flat covers in a straight row: the focused one on the home row grows by DS.Console.Scale.focus, the others stay as they are.
             .scaleEffect(homeRow && selected && !reduceMotion ? DS.Console.Scale.focus : 1)
-            .modifier(ConsoleLaunchArtwork(namespace: launchNamespace, id: game.id))
             .dsAnimation(ConsoleHomeMotion.tileFocus(homeRow: homeRow, reduceMotion: reduceMotion), value: selected)
             // Every cover has its title under it, the art stays clean: the focused one in the primary text, the others secondary. The
             // home row hides the captions of the covers already passed and of those cut off at the edge.
             Text(game.title).opacity(captionVisible ? 1 : 0)
                 .font(DS.Console.Font.callout).lineLimit(1)
                 .foregroundStyle(selected ? DS.Color.textPrimary : DS.Color.textSecondary)
+                // Its color changes with the focus, inside the row's move. Text interpolates such a change on its own, outside the move,
+                // so the captions of the covers whose focus changed drifted from them while the row slid (#1513).
+                .contentTransition(.identity)
                 .padding(.horizontal, DS.Space.xxs).accessibilityHidden(true)
         }
     }
@@ -130,15 +131,6 @@ extension LibraryArtworkState {
         case .broken: attention = .fixFiles
         }
         self.init(mac: game.status == .ready, ios: game.status == .iphoneOnly || game.platforms.contains(.iphone), attention: attention)
-    }
-}
-
-struct ConsoleLaunchArtwork: ViewModifier {
-    let namespace: Namespace.ID?
-    let id: String
-    @ViewBuilder func body(content: Content) -> some View {
-        if let namespace { content.matchedGeometryEffect(id: id, in: namespace) }
-        else { content }
     }
 }
 
